@@ -1,0 +1,365 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ncitools package &mdash; NCITools 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
+
+  
+    <link rel="canonical" href="/NCITools/ncitools.html" />
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=01f34227"></script>
+      <script src="_static/doctools.js?v=9bcbadda"></script>
+      <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="ncitools.geometry package" href="ncitools.geometry.html" />
+    <link rel="prev" title="NCITools documentation" href="index.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            NCITools
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="index.html">NCITools documentation</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">ncitools package</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#subpackages">Subpackages</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.geometry.html">ncitools.geometry package</a></li>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.io.html">ncitools.io package</a></li>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.qc.html">ncitools.qc package</a></li>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.topology.html">ncitools.topology package</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#submodules">Submodules</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#module-ncitools.cli">ncitools.cli module</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#module-ncitools.constants">ncitools.constants module</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#module-ncitools.correlations">ncitools.correlations module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#ncitools.correlations.Afonin_ED_2024"><code class="docutils literal notranslate"><span class="pre">Afonin_ED_2024()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ncitools.correlations.Afonin_linear_LaplED_2024"><code class="docutils literal notranslate"><span class="pre">Afonin_linear_LaplED_2024()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ncitools.correlations.Afonin_quadratic_LaplED_2024"><code class="docutils literal notranslate"><span class="pre">Afonin_quadratic_LaplED_2024()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ncitools.correlations.Emamian_2019"><code class="docutils literal notranslate"><span class="pre">Emamian_2019()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ncitools.correlations.Mata_ED_2011"><code class="docutils literal notranslate"><span class="pre">Mata_ED_2011()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ncitools.correlations.Mata_LaplED_2011"><code class="docutils literal notranslate"><span class="pre">Mata_LaplED_2011()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ncitools.correlations.Nikolaienko_2012"><code class="docutils literal notranslate"><span class="pre">Nikolaienko_2012()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ncitools.correlations.Rozenberg_2000"><code class="docutils literal notranslate"><span class="pre">Rozenberg_2000()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ncitools.correlations.Rozenberg_2014"><code class="docutils literal notranslate"><span class="pre">Rozenberg_2014()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ncitools.correlations.Rudenko_2026_ED"><code class="docutils literal notranslate"><span class="pre">Rudenko_2026_ED()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ncitools.correlations.correlation_1"><code class="docutils literal notranslate"><span class="pre">correlation_1()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#module-ncitools.utils">ncitools.utils module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#ncitools.utils.angle"><code class="docutils literal notranslate"><span class="pre">angle()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ncitools.utils.distance"><code class="docutils literal notranslate"><span class="pre">distance()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ncitools.utils.get_symbol"><code class="docutils literal notranslate"><span class="pre">get_symbol()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ncitools.utils.hb_energy"><code class="docutils literal notranslate"><span class="pre">hb_energy()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ncitools.utils.read_input"><code class="docutils literal notranslate"><span class="pre">read_input()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#module-ncitools">Module contents</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="usage.html">Usage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">NCITools</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">ncitools package</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/ncitools.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="ncitools-package">
+<h1>ncitools package<a class="headerlink" href="#ncitools-package" title="Link to this heading"></a></h1>
+<section id="subpackages">
+<h2>Subpackages<a class="headerlink" href="#subpackages" title="Link to this heading"></a></h2>
+<div class="toctree-wrapper compound">
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="ncitools.geometry.html">ncitools.geometry package</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="ncitools.geometry.html#submodules">Submodules</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ncitools.geometry.html#module-ncitools.geometry.geom">ncitools.geometry.geom module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.geometry.html#ncitools.geometry.geom.build_graph_with_hbs"><code class="docutils literal notranslate"><span class="pre">build_graph_with_hbs()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.geometry.html#ncitools.geometry.geom.find_covalent_pairs"><code class="docutils literal notranslate"><span class="pre">find_covalent_pairs()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.geometry.html#ncitools.geometry.geom.main"><code class="docutils literal notranslate"><span class="pre">main()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.geometry.html#ncitools.geometry.geom.output"><code class="docutils literal notranslate"><span class="pre">output()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="ncitools.geometry.html#module-ncitools.geometry">Module contents</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="ncitools.io.html">ncitools.io package</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="ncitools.io.html#submodules">Submodules</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ncitools.io.html#module-ncitools.io.fixers">ncitools.io.fixers module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.io.html#ncitools.io.fixers.fixPDB"><code class="docutils literal notranslate"><span class="pre">fixPDB()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.io.html#ncitools.io.fixers.optimize_hydrogens"><code class="docutils literal notranslate"><span class="pre">optimize_hydrogens()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="ncitools.io.html#module-ncitools.io.readers">ncitools.io.readers module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.io.html#ncitools.io.readers.read_pdb"><code class="docutils literal notranslate"><span class="pre">read_pdb()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="ncitools.io.html#module-ncitools.io.writers">ncitools.io.writers module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.io.html#ncitools.io.writers.pdb2xyz"><code class="docutils literal notranslate"><span class="pre">pdb2xyz()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="ncitools.io.html#module-ncitools.io">Module contents</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="ncitools.qc.html">ncitools.qc package</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="ncitools.qc.html#submodules">Submodules</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ncitools.qc.html#module-ncitools.qc.dft">ncitools.qc.dft module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.qc.html#ncitools.qc.dft.main"><code class="docutils literal notranslate"><span class="pre">main()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.qc.html#ncitools.qc.dft.write_cube_pyscf"><code class="docutils literal notranslate"><span class="pre">write_cube_pyscf()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="ncitools.qc.html#module-ncitools.qc">Module contents</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="ncitools.topology.html">ncitools.topology package</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="ncitools.topology.html#submodules">Submodules</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ncitools.topology.html#module-ncitools.topology.bcp">ncitools.topology.bcp module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.topology.html#ncitools.topology.bcp.BSplineAIM"><code class="docutils literal notranslate"><span class="pre">BSplineAIM</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="ncitools.topology.html#ncitools.topology.bcp.BSplineAIM.compute_all"><code class="docutils literal notranslate"><span class="pre">BSplineAIM.compute_all()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="ncitools.topology.html#ncitools.topology.bcp.BSplineAIM.from_density"><code class="docutils literal notranslate"><span class="pre">BSplineAIM.from_density()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="ncitools.topology.html#ncitools.topology.bcp.BSplineAIM.gradient"><code class="docutils literal notranslate"><span class="pre">BSplineAIM.gradient()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="ncitools.topology.html#ncitools.topology.bcp.BSplineAIM.hessian"><code class="docutils literal notranslate"><span class="pre">BSplineAIM.hessian()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="ncitools.topology.html#ncitools.topology.bcp.BSplineAIM.value"><code class="docutils literal notranslate"><span class="pre">BSplineAIM.value()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="ncitools.topology.html#ncitools.topology.bcp.BSplineAIM.world_to_grid"><code class="docutils literal notranslate"><span class="pre">BSplineAIM.world_to_grid()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.topology.html#ncitools.topology.bcp.aim_analysis"><code class="docutils literal notranslate"><span class="pre">aim_analysis()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.topology.html#ncitools.topology.bcp.basis"><code class="docutils literal notranslate"><span class="pre">basis()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.topology.html#ncitools.topology.bcp.basis_deriv1"><code class="docutils literal notranslate"><span class="pre">basis_deriv1()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.topology.html#ncitools.topology.bcp.basis_deriv2"><code class="docutils literal notranslate"><span class="pre">basis_deriv2()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.topology.html#ncitools.topology.bcp.build_graph_with_nci"><code class="docutils literal notranslate"><span class="pre">build_graph_with_nci()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.topology.html#ncitools.topology.bcp.enrich_bcps_with_types"><code class="docutils literal notranslate"><span class="pre">enrich_bcps_with_types()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.topology.html#ncitools.topology.bcp.find_bcp_parallel"><code class="docutils literal notranslate"><span class="pre">find_bcp_parallel()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.topology.html#ncitools.topology.bcp.find_donor"><code class="docutils literal notranslate"><span class="pre">find_donor()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.topology.html#ncitools.topology.bcp.find_nci"><code class="docutils literal notranslate"><span class="pre">find_nci()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.topology.html#ncitools.topology.bcp.newton_bcp"><code class="docutils literal notranslate"><span class="pre">newton_bcp()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.topology.html#ncitools.topology.bcp.output"><code class="docutils literal notranslate"><span class="pre">output()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.topology.html#ncitools.topology.bcp.read_cube"><code class="docutils literal notranslate"><span class="pre">read_cube()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="ncitools.topology.html#ncitools.topology.bcp.search_pair"><code class="docutils literal notranslate"><span class="pre">search_pair()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="ncitools.topology.html#module-ncitools.topology">Module contents</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</section>
+<section id="submodules">
+<h2>Submodules<a class="headerlink" href="#submodules" title="Link to this heading"></a></h2>
+</section>
+<section id="module-ncitools.cli">
+<span id="ncitools-cli-module"></span><h2>ncitools.cli module<a class="headerlink" href="#module-ncitools.cli" title="Link to this heading"></a></h2>
+<p>Command-line interface for NCITools – Non-Covalent Interaction analysis.</p>
+<dl class="simple">
+<dt>Subcommands:</dt><dd><p>geom       Detect hydrogen bonds from molecular geometry.
+top        Perform topological (AIM/NCI) analysis from a cube file.
+cube       Generate electron density cube file from a PDB using DFT (PySCF).
+fix        Fix PDB structure, add hydrogens, optionally optimize them.
+convert    Convert between file formats (e.g., PDB → XYZ).</p>
+</dd>
+</dl>
+</section>
+<section id="module-ncitools.constants">
+<span id="ncitools-constants-module"></span><h2>ncitools.constants module<a class="headerlink" href="#module-ncitools.constants" title="Link to this heading"></a></h2>
+<p>Atomic radii and conversion constants for non‑covalent interaction analysis.</p>
+<p>RADII      : Covalent radii (Cambridge Structural Database)
+BONDI      : van der Waals radii (Bondi, with H from Rowland &amp; Taylor)
+bohr_to_angstrom : Conversion factor 0.52918 Å/Bohr</p>
+</section>
+<section id="module-ncitools.correlations">
+<span id="ncitools-correlations-module"></span><h2>ncitools.correlations module<a class="headerlink" href="#module-ncitools.correlations" title="Link to this heading"></a></h2>
+<p>Energy estimation correlations for hydrogen bonds.
+All functions return energy in <strong>kcal/mol</strong>.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="ncitools.correlations.Afonin_ED_2024">
+<span class="sig-prename descclassname"><span class="pre">ncitools.correlations.</span></span><span class="sig-name descname"><span class="pre">Afonin_ED_2024</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rho</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ncitools/correlations.html#Afonin_ED_2024"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ncitools.correlations.Afonin_ED_2024" title="Link to this definition"></a></dt>
+<dd><p>Energy from ρ – linear fit (Afonin, J. Mol. Model. 2024).</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ncitools.correlations.Afonin_linear_LaplED_2024">
+<span class="sig-prename descclassname"><span class="pre">ncitools.correlations.</span></span><span class="sig-name descname"><span class="pre">Afonin_linear_LaplED_2024</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">laplacian</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ncitools/correlations.html#Afonin_linear_LaplED_2024"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ncitools.correlations.Afonin_linear_LaplED_2024" title="Link to this definition"></a></dt>
+<dd><p>Energy from ∇²ρ – linear fit (Afonin).</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ncitools.correlations.Afonin_quadratic_LaplED_2024">
+<span class="sig-prename descclassname"><span class="pre">ncitools.correlations.</span></span><span class="sig-name descname"><span class="pre">Afonin_quadratic_LaplED_2024</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">laplacian</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ncitools/correlations.html#Afonin_quadratic_LaplED_2024"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ncitools.correlations.Afonin_quadratic_LaplED_2024" title="Link to this definition"></a></dt>
+<dd><p>Energy from ∇²ρ – quadratic fit (Afonin).</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ncitools.correlations.Emamian_2019">
+<span class="sig-prename descclassname"><span class="pre">ncitools.correlations.</span></span><span class="sig-name descname"><span class="pre">Emamian_2019</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rho</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ncitools/correlations.html#Emamian_2019"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ncitools.correlations.Emamian_2019" title="Link to this definition"></a></dt>
+<dd><p>Energy from ρ – general correlation (Emamian, J. Comp. Chem. 2019).
+Returns positive kcal/mol.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ncitools.correlations.Mata_ED_2011">
+<span class="sig-prename descclassname"><span class="pre">ncitools.correlations.</span></span><span class="sig-name descname"><span class="pre">Mata_ED_2011</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rho</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ncitools/correlations.html#Mata_ED_2011"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ncitools.correlations.Mata_ED_2011" title="Link to this definition"></a></dt>
+<dd><p>Energy from ρ (e/bohr³) – general correlation.
+Mata et al., Chem. Phys. Lett. 2011; returns kcal/mol.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ncitools.correlations.Mata_LaplED_2011">
+<span class="sig-prename descclassname"><span class="pre">ncitools.correlations.</span></span><span class="sig-name descname"><span class="pre">Mata_LaplED_2011</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">laplacian</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ncitools/correlations.html#Mata_LaplED_2011"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ncitools.correlations.Mata_LaplED_2011" title="Link to this definition"></a></dt>
+<dd><p>Energy from Laplacian ∇²ρ (e/bohr⁵) – general correlation.
+returns kcal/mol.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ncitools.correlations.Nikolaienko_2012">
+<span class="sig-prename descclassname"><span class="pre">ncitools.correlations.</span></span><span class="sig-name descname"><span class="pre">Nikolaienko_2012</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rho</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">contact_type</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'N-H...O'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ncitools/correlations.html#Nikolaienko_2012"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ncitools.correlations.Nikolaienko_2012" title="Link to this definition"></a></dt>
+<dd><p>Energy from ρ, differentiated by H‑bond type.
+Contact types: O-H…O, O-H…N, N-H…O, O-H…C.
+Returns kcal/mol.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ncitools.correlations.Rozenberg_2000">
+<span class="sig-prename descclassname"><span class="pre">ncitools.correlations.</span></span><span class="sig-name descname"><span class="pre">Rozenberg_2000</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dist</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">contact_type</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ncitools/correlations.html#Rozenberg_2000"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ncitools.correlations.Rozenberg_2000" title="Link to this definition"></a></dt>
+<dd><p>Energy from H···A distance (Å) for O–H···O or N–H···O.
+Eq. from Rozenberg, PCCP 2000; returns kcal/mol.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ncitools.correlations.Rozenberg_2014">
+<span class="sig-prename descclassname"><span class="pre">ncitools.correlations.</span></span><span class="sig-name descname"><span class="pre">Rozenberg_2014</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rho</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ncitools/correlations.html#Rozenberg_2014"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ncitools.correlations.Rozenberg_2014" title="Link to this definition"></a></dt>
+<dd><p>Energy from electron density ρ (e/bohr³) at BCP.
+Rozenberg, RSC Adv. 2014; returns kcal/mol.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ncitools.correlations.Rudenko_2026_ED">
+<span class="sig-prename descclassname"><span class="pre">ncitools.correlations.</span></span><span class="sig-name descname"><span class="pre">Rudenko_2026_ED</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rho</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">contact_type</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'C-H...O'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ncitools/correlations.html#Rudenko_2026_ED"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ncitools.correlations.Rudenko_2026_ED" title="Link to this definition"></a></dt>
+<dd><p>Energy from ρ for C–H···O and C–H···N H‑bonds (NCI lab).
+Returns positive kcal/mol.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ncitools.correlations.correlation_1">
+<span class="sig-prename descclassname"><span class="pre">ncitools.correlations.</span></span><span class="sig-name descname"><span class="pre">correlation_1</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rho</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">contact_type</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ncitools/correlations.html#correlation_1"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ncitools.correlations.correlation_1" title="Link to this definition"></a></dt>
+<dd><p>Default energy estimator: uses Rudenko for C–H···X, else Emamian.</p>
+</dd></dl>
+
+</section>
+<section id="module-ncitools.utils">
+<span id="ncitools-utils-module"></span><h2>ncitools.utils module<a class="headerlink" href="#module-ncitools.utils" title="Link to this heading"></a></h2>
+<p>Utility functions for file I/O, geometry, and element symbols.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="ncitools.utils.angle">
+<span class="sig-prename descclassname"><span class="pre">ncitools.utils.</span></span><span class="sig-name descname"><span class="pre">angle</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">atom1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atom2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atom3</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ncitools/utils.html#angle"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ncitools.utils.angle" title="Link to this definition"></a></dt>
+<dd><p>Angle (degrees) between three points (each as [x,y,z]).</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ncitools.utils.distance">
+<span class="sig-prename descclassname"><span class="pre">ncitools.utils.</span></span><span class="sig-name descname"><span class="pre">distance</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">atom1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atom2</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ncitools/utils.html#distance"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ncitools.utils.distance" title="Link to this definition"></a></dt>
+<dd><p>Euclidean distance between two points.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ncitools.utils.get_symbol">
+<span class="sig-prename descclassname"><span class="pre">ncitools.utils.</span></span><span class="sig-name descname"><span class="pre">get_symbol</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">z</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ncitools/utils.html#get_symbol"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ncitools.utils.get_symbol" title="Link to this definition"></a></dt>
+<dd><p>Return element symbol for atomic number Z (common elements).</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ncitools.utils.hb_energy">
+<span class="sig-prename descclassname"><span class="pre">ncitools.utils.</span></span><span class="sig-name descname"><span class="pre">hb_energy</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">hb</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ncitools/utils.html#hb_energy"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ncitools.utils.hb_energy" title="Link to this definition"></a></dt>
+<dd><p>Compute H‑bond energy from distance using Rozenberg 2000.
+hb dict must contain ‘dist_HA’ (Å) and ‘Type’ (e.g. ‘NHO’).</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ncitools.utils.read_input">
+<span class="sig-prename descclassname"><span class="pre">ncitools.utils.</span></span><span class="sig-name descname"><span class="pre">read_input</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">file</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ncitools/utils.html#read_input"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ncitools.utils.read_input" title="Link to this definition"></a></dt>
+<dd><p>Read molecular structure file (PDB or other ASE formats).
+Returns (filename, extension, directory, ASE Atoms object).</p>
+</dd></dl>
+
+</section>
+<section id="module-ncitools">
+<span id="module-contents"></span><h2>Module contents<a class="headerlink" href="#module-ncitools" title="Link to this heading"></a></h2>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="index.html" class="btn btn-neutral float-left" title="NCITools documentation" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="ncitools.geometry.html" class="btn btn-neutral float-right" title="ncitools.geometry package" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, Mark Kaplanskiy.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

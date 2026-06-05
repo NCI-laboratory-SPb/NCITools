@@ -1,0 +1,157 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ncitools.io.fixers &mdash; NCITools 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+
+  
+    <link rel="canonical" href="/NCITools/_modules/ncitools/io/fixers.html" />
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=01f34227"></script>
+      <script src="../../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            NCITools
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../index.html">NCITools documentation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../ncitools.html">ncitools package</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../usage.html">Usage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../installation.html">Installation</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">NCITools</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">ncitools.io.fixers</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for ncitools.io.fixers</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">PDB fixing (PDBFixer) and hydrogen optimisation (xTB/ASE).</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+
+<div class="viewcode-block" id="fixPDB">
+<a class="viewcode-back" href="../../../ncitools.io.html#ncitools.io.fixers.fixPDB">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">fixPDB</span><span class="p">(</span><span class="n">pdb</span><span class="p">,</span> <span class="n">add_hydrogens</span><span class="p">,</span> <span class="n">pH</span><span class="o">=</span><span class="mf">7.4</span><span class="p">):</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">pdbfixer</span><span class="w"> </span><span class="kn">import</span> <span class="n">PDBFixer</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">openmm.app</span><span class="w"> </span><span class="kn">import</span> <span class="n">PDBFile</span>
+
+    <span class="n">filename</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">basename</span><span class="p">(</span><span class="n">pdb</span><span class="p">)</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s1">&#39;.&#39;</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">filename_fixed</span> <span class="o">=</span> <span class="n">filename</span> <span class="o">+</span> <span class="s1">&#39;_fixed.pdb&#39;</span>
+
+    <span class="n">fixer</span> <span class="o">=</span> <span class="n">PDBFixer</span><span class="p">(</span><span class="n">filename</span><span class="o">=</span><span class="n">pdb</span><span class="p">)</span>
+    <span class="c1">#fixer.findMissingResidues()</span>
+    <span class="c1">#fixer.findNonstandardResidues()</span>
+    <span class="c1">#fixer.replaceNonstandardResidues()</span>
+    <span class="c1">#fixer.removeHeterogens(keepWater=False)</span>
+    <span class="c1">#fixer.findMissingAtoms()</span>
+    <span class="c1">#fixer.addMissingAtoms()</span>
+
+    <span class="k">if</span> <span class="n">add_hydrogens</span><span class="p">:</span>
+        <span class="n">fixer</span><span class="o">.</span><span class="n">addMissingHydrogens</span><span class="p">(</span><span class="n">pH</span><span class="p">)</span>
+
+
+    <span class="n">PDBFile</span><span class="o">.</span><span class="n">writeFile</span><span class="p">(</span><span class="n">fixer</span><span class="o">.</span><span class="n">topology</span><span class="p">,</span> <span class="n">fixer</span><span class="o">.</span><span class="n">positions</span><span class="p">,</span> <span class="nb">open</span><span class="p">(</span><span class="n">filename_fixed</span><span class="p">,</span> <span class="s1">&#39;w&#39;</span><span class="p">))</span>
+
+    <span class="k">return</span> <span class="n">filename_fixed</span></div>
+
+
+
+<div class="viewcode-block" id="optimize_hydrogens">
+<a class="viewcode-back" href="../../../ncitools.io.html#ncitools.io.fixers.optimize_hydrogens">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">optimize_hydrogens</span><span class="p">(</span><span class="n">filename</span><span class="p">,</span> <span class="n">charge</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">ase.io</span><span class="w"> </span><span class="kn">import</span> <span class="n">read</span><span class="p">,</span> <span class="n">write</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">ase.constraints</span><span class="w"> </span><span class="kn">import</span> <span class="n">FixAtoms</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">xtb.ase.calculator</span><span class="w"> </span><span class="kn">import</span> <span class="n">XTB</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">ase.optimize</span><span class="w"> </span><span class="kn">import</span> <span class="n">FIRE</span>
+
+    <span class="n">molecule</span> <span class="o">=</span> <span class="n">read</span><span class="p">(</span><span class="n">filename</span><span class="p">)</span>
+    <span class="n">c</span> <span class="o">=</span> <span class="n">FixAtoms</span><span class="p">(</span><span class="n">indices</span><span class="o">=</span><span class="p">[</span><span class="n">atom</span><span class="o">.</span><span class="n">index</span> <span class="k">for</span> <span class="n">atom</span> <span class="ow">in</span> <span class="n">molecule</span> <span class="k">if</span> <span class="n">atom</span><span class="o">.</span><span class="n">symbol</span> <span class="o">!=</span> <span class="s1">&#39;H&#39;</span><span class="p">])</span>
+    <span class="n">molecule</span><span class="o">.</span><span class="n">set_constraint</span><span class="p">(</span><span class="n">c</span><span class="p">)</span>
+
+    <span class="n">calc</span> <span class="o">=</span> <span class="n">XTB</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">&quot;GFN2-xTB&quot;</span><span class="p">,</span> <span class="n">charge</span><span class="o">=</span><span class="n">charge</span><span class="p">,</span> <span class="n">max_iterations</span><span class="o">=</span><span class="mi">1000</span><span class="p">)</span>
+    <span class="n">molecule</span><span class="o">.</span><span class="n">calc</span> <span class="o">=</span> <span class="n">calc</span>
+    <span class="n">opt</span> <span class="o">=</span> <span class="n">FIRE</span><span class="p">(</span><span class="n">molecule</span><span class="p">)</span>
+    <span class="n">opt</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">fmax</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">)</span>
+
+    <span class="n">write</span><span class="p">(</span><span class="n">filename</span><span class="p">,</span> <span class="n">molecule</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s1">&#39;xyz&#39;</span><span class="p">)</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, Mark Kaplanskiy.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

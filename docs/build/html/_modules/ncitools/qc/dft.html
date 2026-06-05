@@ -1,0 +1,206 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ncitools.qc.dft &mdash; NCITools 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+
+  
+    <link rel="canonical" href="/NCITools/_modules/ncitools/qc/dft.html" />
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=01f34227"></script>
+      <script src="../../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            NCITools
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../index.html">NCITools documentation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../ncitools.html">ncitools package</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../usage.html">Usage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../installation.html">Installation</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">NCITools</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">ncitools.qc.dft</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for ncitools.qc.dft</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">DFT calculations with PySCF to generate electron density cube files.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">pyscf</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pyscf</span><span class="w"> </span><span class="kn">import</span> <span class="n">gto</span><span class="p">,</span> <span class="n">dft</span><span class="p">,</span> <span class="n">tools</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pyscf.lib</span><span class="w"> </span><span class="kn">import</span> <span class="n">num_threads</span>
+
+
+<div class="viewcode-block" id="write_cube_pyscf">
+<a class="viewcode-back" href="../../../ncitools.qc.html#ncitools.qc.dft.write_cube_pyscf">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">write_cube_pyscf</span><span class="p">(</span><span class="n">pdb_file</span><span class="p">,</span> <span class="n">functional</span><span class="o">=</span><span class="s1">&#39;b3lyp&#39;</span><span class="p">,</span> <span class="n">basis</span><span class="o">=</span><span class="s1">&#39;def2-svp&#39;</span><span class="p">,</span>
+                     <span class="n">aux_basis</span><span class="o">=</span><span class="s1">&#39;def2-universal-jfit&#39;</span><span class="p">,</span> <span class="n">charge</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">multiplicity</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+                     <span class="n">ncores</span><span class="o">=</span><span class="mi">12</span><span class="p">,</span> <span class="n">cube_name</span><span class="o">=</span><span class="s1">&#39;default.cube&#39;</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Run DFT (RKS) with density fitting and write density cube.</span>
+
+<span class="sd">    Perform DFT calculation with PySCF and write electron density cube.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    pdb_file : str</span>
+<span class="sd">        Path to the input PDB file.</span>
+<span class="sd">    functional : str, optional</span>
+<span class="sd">        DFT functional (default: &#39;b3lyp&#39;).</span>
+<span class="sd">    basis : str, optional</span>
+<span class="sd">        Orbital basis set (default: &#39;def2-svp&#39;).</span>
+<span class="sd">    aux_basis : str, optional</span>
+<span class="sd">        Auxiliary basis set for density fitting (default: &#39;def2-universal-jfit&#39;).</span>
+<span class="sd">    charge : int, optional</span>
+<span class="sd">        Molecular charge (default: 0).</span>
+<span class="sd">    ncores : int, optional</span>
+<span class="sd">        Number of CPU cores to use (default: 12).</span>
+<span class="sd">    cube_name : str, optional</span>
+<span class="sd">        Name of the output cube file (default: &#39;default.cube&#39;).</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    str</span>
+<span class="sd">        Path to the generated cube file.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Set number of threads for OpenMP (PySCF uses OpenMP for many operations)</span>
+    <span class="n">num_threads</span><span class="p">(</span><span class="n">ncores</span><span class="p">)</span>
+
+    <span class="c1"># Build molecule from PDB file</span>
+    <span class="n">mol</span> <span class="o">=</span> <span class="n">gto</span><span class="o">.</span><span class="n">Mole</span><span class="p">(</span><span class="n">max_memory</span><span class="o">=</span><span class="mi">120000</span><span class="p">)</span>
+    <span class="n">mol</span><span class="o">.</span><span class="n">atom</span> <span class="o">=</span> <span class="n">pdb_file</span>  <span class="c1"># PySCF can directly read PDB files</span>
+    <span class="n">mol</span><span class="o">.</span><span class="n">charge</span> <span class="o">=</span> <span class="n">charge</span>
+    <span class="n">mol</span><span class="o">.</span><span class="n">spin</span> <span class="o">=</span> <span class="n">multiplicity</span> <span class="o">-</span> <span class="mi">1</span>
+    <span class="n">mol</span><span class="o">.</span><span class="n">basis</span> <span class="o">=</span> <span class="n">basis</span>
+    <span class="n">mol</span><span class="o">.</span><span class="n">verbose</span> <span class="o">=</span> <span class="mi">4</span>  <span class="c1"># Increase verbosity to see progress (optional)</span>
+    <span class="n">mol</span><span class="o">.</span><span class="n">build</span><span class="p">()</span>
+
+    <span class="c1"># Set up DFT with density fitting</span>
+    <span class="n">mf</span> <span class="o">=</span> <span class="n">dft</span><span class="o">.</span><span class="n">RKS</span><span class="p">(</span><span class="n">mol</span><span class="p">)</span>
+    <span class="n">mf</span><span class="o">.</span><span class="n">xc</span> <span class="o">=</span> <span class="n">functional</span>
+    <span class="c1"># Enable density fitting (RI-J) using the specified auxiliary basis</span>
+    <span class="n">mf</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">density_fit</span><span class="p">(</span><span class="n">auxbasis</span><span class="o">=</span><span class="n">aux_basis</span><span class="p">)</span>
+    <span class="n">mf</span><span class="o">.</span><span class="n">max_cycle</span> <span class="o">=</span> <span class="mi">250</span>  <span class="c1"># Maximum SCF iterations</span>
+
+    <span class="c1"># Run SCF calculation</span>
+    <span class="n">energy</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">kernel</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;SCF energy: </span><span class="si">{</span><span class="n">energy</span><span class="si">:</span><span class="s2">.12f</span><span class="si">}</span><span class="s2"> Hartree&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Get the converged density matrix</span>
+    <span class="n">dm</span> <span class="o">=</span> <span class="n">mf</span><span class="o">.</span><span class="n">make_rdm1</span><span class="p">()</span>
+
+    <span class="c1"># Write cube file of the electron density</span>
+    <span class="n">tools</span><span class="o">.</span><span class="n">cubegen</span><span class="o">.</span><span class="n">density</span><span class="p">(</span><span class="n">mol</span><span class="p">,</span> <span class="n">cube_name</span><span class="p">,</span> <span class="n">dm</span><span class="p">,</span> <span class="n">nx</span><span class="o">=</span><span class="mi">250</span><span class="p">,</span> <span class="n">ny</span><span class="o">=</span><span class="mi">250</span><span class="p">,</span> <span class="n">nz</span><span class="o">=</span><span class="mi">250</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">cube_name</span></div>
+
+
+
+<div class="viewcode-block" id="main">
+<a class="viewcode-back" href="../../../ncitools.qc.html#ncitools.qc.dft.main">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+    <span class="c1"># Get PDB file path from user input</span>
+    <span class="n">pdb_file</span> <span class="o">=</span> <span class="nb">input</span><span class="p">(</span><span class="s2">&quot;Enter the path to the pdb file: &quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s1">&#39;&quot;&#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isfile</span><span class="p">(</span><span class="n">pdb_file</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Error: File not found: </span><span class="si">{</span><span class="n">pdb_file</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span>
+
+    <span class="c1"># Determine output cube name based on input filename</span>
+    <span class="n">base_name</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">splitext</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">basename</span><span class="p">(</span><span class="n">pdb_file</span><span class="p">))[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">cube_name</span> <span class="o">=</span> <span class="n">base_name</span> <span class="o">+</span> <span class="s1">&#39;.cube&#39;</span>
+    <span class="n">abs_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">pdb_file</span><span class="p">)</span>
+
+    <span class="c1"># Change to the directory of the input file (so the cube file is created there)</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">chdir</span><span class="p">(</span><span class="n">abs_dir</span><span class="p">)</span>
+
+    <span class="c1"># Perform calculation</span>
+    <span class="n">write_cube_pyscf</span><span class="p">(</span><span class="n">pdb_file</span><span class="p">,</span> <span class="n">cube_name</span><span class="o">=</span><span class="n">cube_name</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cube file written: </span><span class="si">{</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">abs_dir</span><span class="p">,</span><span class="w"> </span><span class="n">cube_name</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
+
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, Mark Kaplanskiy.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

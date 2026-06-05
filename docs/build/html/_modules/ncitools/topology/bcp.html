@@ -1,0 +1,673 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ncitools.topology.bcp &mdash; NCITools 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+
+  
+    <link rel="canonical" href="/NCITools/_modules/ncitools/topology/bcp.html" />
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=01f34227"></script>
+      <script src="../../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            NCITools
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../index.html">NCITools documentation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../ncitools.html">ncitools package</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../usage.html">Usage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../installation.html">Installation</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">NCITools</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">ncitools.topology.bcp</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for ncitools.topology.bcp</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Topological analysis of electron density: BCP search, NCI filtering, energy estimation.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy.ndimage</span><span class="w"> </span><span class="kn">import</span> <span class="n">spline_filter</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy.spatial</span><span class="w"> </span><span class="kn">import</span> <span class="n">cKDTree</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">numpy.linalg</span><span class="w"> </span><span class="kn">import</span> <span class="n">solve</span><span class="p">,</span> <span class="n">eigvalsh</span><span class="p">,</span> <span class="n">norm</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">concurrent.futures</span><span class="w"> </span><span class="kn">import</span> <span class="n">ProcessPoolExecutor</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">itertools</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">networkx</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nx</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tqdm</span><span class="w"> </span><span class="kn">import</span> <span class="n">tqdm</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">ncitools.correlations</span><span class="w"> </span><span class="kn">import</span> <span class="n">correlation_1</span>   <span class="c1"># default energy estimator</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">ncitools.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_symbol</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">ncitools.constants</span><span class="w"> </span><span class="kn">import</span> <span class="n">bohr_to_angstrom</span>
+
+<span class="c1"># -------------------------------------------------------------</span>
+<span class="c1">#  Поиск атома-донора для водорода (ближайший атом, кроме акцептора)</span>
+<span class="c1"># -------------------------------------------------------------</span>
+<div class="viewcode-block" id="find_donor">
+<a class="viewcode-back" href="../../../ncitools.topology.html#ncitools.topology.bcp.find_donor">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">find_donor</span><span class="p">(</span><span class="n">hydrogen_idx</span><span class="p">,</span> <span class="n">atoms</span><span class="p">,</span> <span class="n">exclude_idx</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Находит атом, ковалентно связанный с водородом (индекс hydrogen_idx),</span>
+<span class="sd">    исключая атом с индексом exclude_idx (акцептор) и сам водород.</span>
+<span class="sd">    Возвращает индекс донора или None, если не найден (например, если молекула состоит только из водорода).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">h_pos</span> <span class="o">=</span> <span class="n">atoms</span><span class="p">[</span><span class="n">hydrogen_idx</span><span class="p">][</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">best_dist</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">inf</span>
+    <span class="n">best_idx</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="p">(</span><span class="n">z</span><span class="p">,</span> <span class="n">pos</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">atoms</span><span class="p">):</span>
+        <span class="c1"># Пропускаем сам водород и атом-акцептор</span>
+        <span class="k">if</span> <span class="n">i</span> <span class="o">==</span> <span class="n">hydrogen_idx</span> <span class="ow">or</span> <span class="n">i</span> <span class="o">==</span> <span class="n">exclude_idx</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">dist</span> <span class="o">=</span> <span class="n">norm</span><span class="p">(</span><span class="n">h_pos</span> <span class="o">-</span> <span class="n">pos</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">dist</span> <span class="o">&lt;</span> <span class="n">best_dist</span><span class="p">:</span>
+            <span class="n">best_dist</span> <span class="o">=</span> <span class="n">dist</span>
+            <span class="n">best_idx</span> <span class="o">=</span> <span class="n">i</span>
+    <span class="k">return</span> <span class="n">best_idx</span></div>
+
+
+<span class="c1"># =========================================================</span>
+<span class="c1"># 1. Быстрое чтение cube</span>
+<span class="c1"># =========================================================</span>
+
+<div class="viewcode-block" id="read_cube">
+<a class="viewcode-back" href="../../../ncitools.topology.html#ncitools.topology.bcp.read_cube">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">read_cube</span><span class="p">(</span><span class="n">filename</span><span class="p">):</span>
+
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">filename</span><span class="p">,</span> <span class="s1">&#39;r&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">lines</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">readlines</span><span class="p">()</span>
+
+    <span class="n">natoms</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">lines</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">()[</span><span class="mi">0</span><span class="p">]))</span>
+    <span class="n">origin</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="nb">map</span><span class="p">(</span><span class="nb">float</span><span class="p">,</span> <span class="n">lines</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">()[</span><span class="mi">1</span><span class="p">:</span><span class="mi">4</span><span class="p">])))</span>
+
+    <span class="n">nx</span><span class="p">,</span> <span class="n">dx</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">lines</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">()[</span><span class="mi">0</span><span class="p">])),</span> <span class="nb">float</span><span class="p">(</span><span class="n">lines</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">()[</span><span class="mi">1</span><span class="p">])</span>
+    <span class="n">ny</span><span class="p">,</span> <span class="n">dy</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">lines</span><span class="p">[</span><span class="mi">4</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">()[</span><span class="mi">0</span><span class="p">])),</span> <span class="nb">float</span><span class="p">(</span><span class="n">lines</span><span class="p">[</span><span class="mi">4</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">()[</span><span class="mi">2</span><span class="p">])</span>
+    <span class="n">nz</span><span class="p">,</span> <span class="n">dz</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">lines</span><span class="p">[</span><span class="mi">5</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">()[</span><span class="mi">0</span><span class="p">])),</span> <span class="nb">float</span><span class="p">(</span><span class="n">lines</span><span class="p">[</span><span class="mi">5</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">()[</span><span class="mi">3</span><span class="p">])</span>
+
+    <span class="n">spacing</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">dx</span><span class="p">,</span> <span class="n">dy</span><span class="p">,</span> <span class="n">dz</span><span class="p">])</span>
+
+    <span class="n">atoms</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">natoms</span><span class="p">):</span>
+        <span class="n">parts</span> <span class="o">=</span> <span class="n">lines</span><span class="p">[</span><span class="mi">6</span> <span class="o">+</span> <span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+        <span class="n">Z</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">parts</span><span class="p">[</span><span class="mi">0</span><span class="p">]))</span>
+        <span class="n">coord</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="nb">map</span><span class="p">(</span><span class="nb">float</span><span class="p">,</span> <span class="n">parts</span><span class="p">[</span><span class="mi">2</span><span class="p">:</span><span class="mi">5</span><span class="p">])))</span>
+        <span class="n">atoms</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">Z</span><span class="p">,</span> <span class="n">coord</span><span class="p">))</span>
+
+    <span class="n">data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">fromstring</span><span class="p">(</span><span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">lines</span><span class="p">[</span><span class="mi">6</span> <span class="o">+</span> <span class="n">natoms</span><span class="p">:]),</span> <span class="n">sep</span><span class="o">=</span><span class="s2">&quot; &quot;</span><span class="p">)</span>
+    <span class="n">density</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">reshape</span><span class="p">((</span><span class="n">nx</span><span class="p">,</span> <span class="n">ny</span><span class="p">,</span> <span class="n">nz</span><span class="p">))</span>
+
+    <span class="k">return</span> <span class="n">origin</span><span class="p">,</span> <span class="n">spacing</span><span class="p">,</span> <span class="n">density</span><span class="p">,</span> <span class="n">atoms</span></div>
+
+
+<span class="c1"># ============================================================================</span>
+<span class="c1">#  B‑spline basis functions (cubic, order 3) and their derivatives</span>
+<span class="c1"># ============================================================================</span>
+
+<div class="viewcode-block" id="basis">
+<a class="viewcode-back" href="../../../ncitools.topology.html#ncitools.topology.bcp.basis">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">basis</span><span class="p">(</span><span class="n">t</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Cubic B‑spline basis function β(t).&quot;&quot;&quot;</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
+    <span class="c1"># intervals</span>
+    <span class="n">m1</span> <span class="o">=</span> <span class="p">(</span><span class="n">t</span> <span class="o">&gt;=</span> <span class="o">-</span><span class="mi">2</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">t</span> <span class="o">&lt;=</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">m2</span> <span class="o">=</span> <span class="p">(</span><span class="n">t</span> <span class="o">&gt;</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">t</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">)</span>
+    <span class="n">m3</span> <span class="o">=</span> <span class="p">(</span><span class="n">t</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">t</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">m4</span> <span class="o">=</span> <span class="p">(</span><span class="n">t</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">t</span> <span class="o">&lt;=</span> <span class="mi">2</span><span class="p">)</span>
+    <span class="n">t1</span> <span class="o">=</span> <span class="n">t</span><span class="p">[</span><span class="n">m1</span><span class="p">]</span>
+    <span class="n">result</span><span class="p">[</span><span class="n">m1</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mf">1.0</span><span class="o">/</span><span class="mf">6.0</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">t1</span> <span class="o">+</span> <span class="mf">2.0</span><span class="p">)</span><span class="o">**</span><span class="mi">3</span>
+    <span class="n">t2</span> <span class="o">=</span> <span class="n">t</span><span class="p">[</span><span class="n">m2</span><span class="p">]</span>
+    <span class="n">result</span><span class="p">[</span><span class="n">m2</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mf">1.0</span><span class="o">/</span><span class="mf">6.0</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="o">-</span><span class="mf">3.0</span><span class="o">*</span><span class="n">t2</span><span class="o">**</span><span class="mi">3</span> <span class="o">-</span> <span class="mf">6.0</span><span class="o">*</span><span class="n">t2</span><span class="o">**</span><span class="mi">2</span> <span class="o">+</span> <span class="mf">4.0</span><span class="p">)</span>
+    <span class="n">t3</span> <span class="o">=</span> <span class="n">t</span><span class="p">[</span><span class="n">m3</span><span class="p">]</span>
+    <span class="n">result</span><span class="p">[</span><span class="n">m3</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mf">1.0</span><span class="o">/</span><span class="mf">6.0</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span> <span class="mf">3.0</span><span class="o">*</span><span class="n">t3</span><span class="o">**</span><span class="mi">3</span> <span class="o">-</span> <span class="mf">6.0</span><span class="o">*</span><span class="n">t3</span><span class="o">**</span><span class="mi">2</span> <span class="o">+</span> <span class="mf">4.0</span><span class="p">)</span>
+    <span class="n">t4</span> <span class="o">=</span> <span class="n">t</span><span class="p">[</span><span class="n">m4</span><span class="p">]</span>
+    <span class="n">result</span><span class="p">[</span><span class="n">m4</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mf">1.0</span><span class="o">/</span><span class="mf">6.0</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="mf">2.0</span> <span class="o">-</span> <span class="n">t4</span><span class="p">)</span><span class="o">**</span><span class="mi">3</span>
+    <span class="k">return</span> <span class="n">result</span></div>
+
+
+<div class="viewcode-block" id="basis_deriv1">
+<a class="viewcode-back" href="../../../ncitools.topology.html#ncitools.topology.bcp.basis_deriv1">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">basis_deriv1</span><span class="p">(</span><span class="n">t</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;First derivative β&#39;(t).&quot;&quot;&quot;</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
+    <span class="n">m1</span> <span class="o">=</span> <span class="p">(</span><span class="n">t</span> <span class="o">&gt;=</span> <span class="o">-</span><span class="mi">2</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">t</span> <span class="o">&lt;=</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">m2</span> <span class="o">=</span> <span class="p">(</span><span class="n">t</span> <span class="o">&gt;</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">t</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">)</span>
+    <span class="n">m3</span> <span class="o">=</span> <span class="p">(</span><span class="n">t</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">t</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">m4</span> <span class="o">=</span> <span class="p">(</span><span class="n">t</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">t</span> <span class="o">&lt;=</span> <span class="mi">2</span><span class="p">)</span>
+    <span class="n">t1</span> <span class="o">=</span> <span class="n">t</span><span class="p">[</span><span class="n">m1</span><span class="p">]</span>
+    <span class="n">result</span><span class="p">[</span><span class="n">m1</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="n">t1</span> <span class="o">+</span> <span class="mf">2.0</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span>
+    <span class="n">t2</span> <span class="o">=</span> <span class="n">t</span><span class="p">[</span><span class="n">m2</span><span class="p">]</span>
+    <span class="n">result</span><span class="p">[</span><span class="n">m2</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="o">-</span><span class="mf">3.0</span><span class="o">*</span><span class="n">t2</span><span class="o">**</span><span class="mi">2</span> <span class="o">-</span> <span class="mf">4.0</span><span class="o">*</span><span class="n">t2</span><span class="p">)</span>
+    <span class="n">t3</span> <span class="o">=</span> <span class="n">t</span><span class="p">[</span><span class="n">m3</span><span class="p">]</span>
+    <span class="n">result</span><span class="p">[</span><span class="n">m3</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span> <span class="mf">3.0</span><span class="o">*</span><span class="n">t3</span><span class="o">**</span><span class="mi">2</span> <span class="o">-</span> <span class="mf">4.0</span><span class="o">*</span><span class="n">t3</span><span class="p">)</span>
+    <span class="n">t4</span> <span class="o">=</span> <span class="n">t</span><span class="p">[</span><span class="n">m4</span><span class="p">]</span>
+    <span class="n">result</span><span class="p">[</span><span class="n">m4</span><span class="p">]</span> <span class="o">=</span> <span class="o">-</span><span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="mf">2.0</span> <span class="o">-</span> <span class="n">t4</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span>
+    <span class="k">return</span> <span class="n">result</span></div>
+
+
+<div class="viewcode-block" id="basis_deriv2">
+<a class="viewcode-back" href="../../../ncitools.topology.html#ncitools.topology.bcp.basis_deriv2">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">basis_deriv2</span><span class="p">(</span><span class="n">t</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Second derivative β&#39;&#39;(t).&quot;&quot;&quot;</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
+    <span class="n">m1</span> <span class="o">=</span> <span class="p">(</span><span class="n">t</span> <span class="o">&gt;=</span> <span class="o">-</span><span class="mi">2</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">t</span> <span class="o">&lt;=</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">m2</span> <span class="o">=</span> <span class="p">(</span><span class="n">t</span> <span class="o">&gt;</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">t</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">)</span>
+    <span class="n">m3</span> <span class="o">=</span> <span class="p">(</span><span class="n">t</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">t</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">m4</span> <span class="o">=</span> <span class="p">(</span><span class="n">t</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">t</span> <span class="o">&lt;=</span> <span class="mi">2</span><span class="p">)</span>
+    <span class="n">t1</span> <span class="o">=</span> <span class="n">t</span><span class="p">[</span><span class="n">m1</span><span class="p">]</span>
+    <span class="n">result</span><span class="p">[</span><span class="n">m1</span><span class="p">]</span> <span class="o">=</span> <span class="n">t1</span> <span class="o">+</span> <span class="mf">2.0</span>
+    <span class="n">t2</span> <span class="o">=</span> <span class="n">t</span><span class="p">[</span><span class="n">m2</span><span class="p">]</span>
+    <span class="n">result</span><span class="p">[</span><span class="n">m2</span><span class="p">]</span> <span class="o">=</span> <span class="o">-</span><span class="mf">3.0</span><span class="o">*</span><span class="n">t2</span> <span class="o">-</span> <span class="mf">2.0</span>
+    <span class="n">t3</span> <span class="o">=</span> <span class="n">t</span><span class="p">[</span><span class="n">m3</span><span class="p">]</span>
+    <span class="n">result</span><span class="p">[</span><span class="n">m3</span><span class="p">]</span> <span class="o">=</span>  <span class="mf">3.0</span><span class="o">*</span><span class="n">t3</span> <span class="o">-</span> <span class="mf">2.0</span>
+    <span class="n">t4</span> <span class="o">=</span> <span class="n">t</span><span class="p">[</span><span class="n">m4</span><span class="p">]</span>
+    <span class="n">result</span><span class="p">[</span><span class="n">m4</span><span class="p">]</span> <span class="o">=</span> <span class="mf">2.0</span> <span class="o">-</span> <span class="n">t4</span>
+    <span class="k">return</span> <span class="n">result</span></div>
+
+
+<span class="c1"># ============================================================================</span>
+<span class="c1">#  B‑spline interpolator with analytical derivatives</span>
+<span class="c1"># ============================================================================</span>
+
+<div class="viewcode-block" id="BSplineAIM">
+<a class="viewcode-back" href="../../../ncitools.topology.html#ncitools.topology.bcp.BSplineAIM">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">BSplineAIM</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Interpolator for a 3D scalar field (electron density) using cubic B‑splines.</span>
+<span class="sd">    Provides value, gradient and Hessian at any point in world coordinates.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">coeffs</span><span class="p">,</span> <span class="n">origin</span><span class="p">,</span> <span class="n">spacing</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">coeffs</span> <span class="o">=</span> <span class="n">coeffs</span>                 <span class="c1"># spline coefficients (same shape as density)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">origin</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">origin</span><span class="p">)</span>     <span class="c1"># (x0, y0, z0)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">spacing</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">spacing</span><span class="p">)</span>   <span class="c1"># (dx, dy, dz)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">inv_spacing</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">spacing</span>
+
+<div class="viewcode-block" id="BSplineAIM.from_density">
+<a class="viewcode-back" href="../../../ncitools.topology.html#ncitools.topology.bcp.BSplineAIM.from_density">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_density</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">density</span><span class="p">,</span> <span class="n">origin</span><span class="p">,</span> <span class="n">spacing</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Construct from a raw density grid (calls spline_filter internally).&quot;&quot;&quot;</span>
+        <span class="n">coeffs</span> <span class="o">=</span> <span class="n">spline_filter</span><span class="p">(</span><span class="n">density</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span><span class="n">coeffs</span><span class="p">,</span> <span class="n">origin</span><span class="p">,</span> <span class="n">spacing</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="BSplineAIM.world_to_grid">
+<a class="viewcode-back" href="../../../ncitools.topology.html#ncitools.topology.bcp.BSplineAIM.world_to_grid">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">world_to_grid</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">r</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Convert world coordinates to grid (pixel) coordinates.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">r</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">origin</span><span class="p">)</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">inv_spacing</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_local_coeffs_and_weights</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">g</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        For a grid point g = (x,y,z) (float) return the indices of the</span>
+<span class="sd">        surrounding knots and the basis function values (and derivatives)</span>
+<span class="sd">        needed to evaluate the spline.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># Indices of the knot left of g</span>
+        <span class="n">i0</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">g</span><span class="p">[</span><span class="mi">0</span><span class="p">]))</span>
+        <span class="n">j0</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">g</span><span class="p">[</span><span class="mi">1</span><span class="p">]))</span>
+        <span class="n">k0</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">g</span><span class="p">[</span><span class="mi">2</span><span class="p">]))</span>
+
+        <span class="c1"># Candidate indices (4 per direction because cubic spline support = [-2,2])</span>
+        <span class="n">i_cand</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">i0</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">i0</span> <span class="o">+</span> <span class="mi">3</span><span class="p">)</span>
+        <span class="n">j_cand</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">j0</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">j0</span> <span class="o">+</span> <span class="mi">3</span><span class="p">)</span>
+        <span class="n">k_cand</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">k0</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">k0</span> <span class="o">+</span> <span class="mi">3</span><span class="p">)</span>
+
+        <span class="c1"># Clip to the valid range (grid boundary handling, similar to &#39;nearest&#39;)</span>
+        <span class="n">shape</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">coeffs</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">i_inds</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">unique</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">i_cand</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span><span class="p">))</span>
+        <span class="n">j_inds</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">unique</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">j_cand</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span><span class="p">))</span>
+        <span class="n">k_inds</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">unique</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">k_cand</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span><span class="p">))</span>
+
+        <span class="c1"># Distances to the actual knots</span>
+        <span class="n">ti</span> <span class="o">=</span> <span class="n">g</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="n">i_inds</span>
+        <span class="n">tj</span> <span class="o">=</span> <span class="n">g</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">j_inds</span>
+        <span class="n">tk</span> <span class="o">=</span> <span class="n">g</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">-</span> <span class="n">k_inds</span>
+
+        <span class="c1"># Basis values and derivatives</span>
+        <span class="n">Bi</span> <span class="o">=</span> <span class="n">basis</span><span class="p">(</span><span class="n">ti</span><span class="p">)</span>
+        <span class="n">Bj</span> <span class="o">=</span> <span class="n">basis</span><span class="p">(</span><span class="n">tj</span><span class="p">)</span>
+        <span class="n">Bk</span> <span class="o">=</span> <span class="n">basis</span><span class="p">(</span><span class="n">tk</span><span class="p">)</span>
+
+        <span class="n">dBi</span> <span class="o">=</span> <span class="n">basis_deriv1</span><span class="p">(</span><span class="n">ti</span><span class="p">)</span>
+        <span class="n">dBj</span> <span class="o">=</span> <span class="n">basis_deriv1</span><span class="p">(</span><span class="n">tj</span><span class="p">)</span>
+        <span class="n">dBk</span> <span class="o">=</span> <span class="n">basis_deriv1</span><span class="p">(</span><span class="n">tk</span><span class="p">)</span>
+
+        <span class="n">d2Bi</span> <span class="o">=</span> <span class="n">basis_deriv2</span><span class="p">(</span><span class="n">ti</span><span class="p">)</span>
+        <span class="n">d2Bj</span> <span class="o">=</span> <span class="n">basis_deriv2</span><span class="p">(</span><span class="n">tj</span><span class="p">)</span>
+        <span class="n">d2Bk</span> <span class="o">=</span> <span class="n">basis_deriv2</span><span class="p">(</span><span class="n">tk</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">i_inds</span><span class="p">,</span> <span class="n">j_inds</span><span class="p">,</span> <span class="n">k_inds</span><span class="p">,</span> <span class="n">Bi</span><span class="p">,</span> <span class="n">Bj</span><span class="p">,</span> <span class="n">Bk</span><span class="p">,</span> <span class="n">dBi</span><span class="p">,</span> <span class="n">dBj</span><span class="p">,</span> <span class="n">dBk</span><span class="p">,</span> <span class="n">d2Bi</span><span class="p">,</span> <span class="n">d2Bj</span><span class="p">,</span> <span class="n">d2Bk</span>
+
+<div class="viewcode-block" id="BSplineAIM.compute_all">
+<a class="viewcode-back" href="../../../ncitools.topology.html#ncitools.topology.bcp.BSplineAIM.compute_all">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">compute_all</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">r</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Return (value, gradient, Hessian) at world point r in one call.</span>
+<span class="sd">        This is the most efficient way to obtain all three.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">g</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">world_to_grid</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
+        <span class="p">(</span><span class="n">i_inds</span><span class="p">,</span> <span class="n">j_inds</span><span class="p">,</span> <span class="n">k_inds</span><span class="p">,</span>
+         <span class="n">Bi</span><span class="p">,</span> <span class="n">Bj</span><span class="p">,</span> <span class="n">Bk</span><span class="p">,</span>
+         <span class="n">dBi</span><span class="p">,</span> <span class="n">dBj</span><span class="p">,</span> <span class="n">dBk</span><span class="p">,</span>
+         <span class="n">d2Bi</span><span class="p">,</span> <span class="n">d2Bj</span><span class="p">,</span> <span class="n">d2Bk</span><span class="p">)</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_local_coeffs_and_weights</span><span class="p">(</span><span class="n">g</span><span class="p">)</span>
+
+        <span class="n">val</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="n">grad</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+        <span class="n">hess</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+
+        <span class="c1"># Loop over the (at most) 4x4x4 = 64 contributing knots</span>
+        <span class="k">for</span> <span class="n">ii</span><span class="p">,</span> <span class="n">bi</span><span class="p">,</span> <span class="n">dbi</span><span class="p">,</span> <span class="n">d2bi</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">i_inds</span><span class="p">,</span> <span class="n">Bi</span><span class="p">,</span> <span class="n">dBi</span><span class="p">,</span> <span class="n">d2Bi</span><span class="p">):</span>
+            <span class="k">for</span> <span class="n">jj</span><span class="p">,</span> <span class="n">bj</span><span class="p">,</span> <span class="n">dbj</span><span class="p">,</span> <span class="n">d2bj</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">j_inds</span><span class="p">,</span> <span class="n">Bj</span><span class="p">,</span> <span class="n">dBj</span><span class="p">,</span> <span class="n">d2Bj</span><span class="p">):</span>
+                <span class="k">for</span> <span class="n">kk</span><span class="p">,</span> <span class="n">bk</span><span class="p">,</span> <span class="n">dbk</span><span class="p">,</span> <span class="n">d2bk</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">k_inds</span><span class="p">,</span> <span class="n">Bk</span><span class="p">,</span> <span class="n">dBk</span><span class="p">,</span> <span class="n">d2Bk</span><span class="p">):</span>
+                    <span class="n">c</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">coeffs</span><span class="p">[</span><span class="n">ii</span><span class="p">,</span> <span class="n">jj</span><span class="p">,</span> <span class="n">kk</span><span class="p">]</span>
+                    <span class="n">val</span> <span class="o">+=</span> <span class="n">c</span> <span class="o">*</span> <span class="n">bi</span> <span class="o">*</span> <span class="n">bj</span> <span class="o">*</span> <span class="n">bk</span>
+                    <span class="n">grad</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+=</span> <span class="n">c</span> <span class="o">*</span> <span class="n">dbi</span> <span class="o">*</span> <span class="n">bj</span> <span class="o">*</span> <span class="n">bk</span>
+                    <span class="n">grad</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">+=</span> <span class="n">c</span> <span class="o">*</span> <span class="n">bi</span> <span class="o">*</span> <span class="n">dbj</span> <span class="o">*</span> <span class="n">bk</span>
+                    <span class="n">grad</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">+=</span> <span class="n">c</span> <span class="o">*</span> <span class="n">bi</span> <span class="o">*</span> <span class="n">bj</span> <span class="o">*</span> <span class="n">dbk</span>
+                    <span class="n">hess</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">+=</span> <span class="n">c</span> <span class="o">*</span> <span class="n">d2bi</span> <span class="o">*</span> <span class="n">bj</span> <span class="o">*</span> <span class="n">bk</span>
+                    <span class="n">hess</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">+=</span> <span class="n">c</span> <span class="o">*</span> <span class="n">bi</span> <span class="o">*</span> <span class="n">d2bj</span> <span class="o">*</span> <span class="n">bk</span>
+                    <span class="n">hess</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">+=</span> <span class="n">c</span> <span class="o">*</span> <span class="n">bi</span> <span class="o">*</span> <span class="n">bj</span> <span class="o">*</span> <span class="n">d2bk</span>
+                    <span class="n">hess</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">+=</span> <span class="n">c</span> <span class="o">*</span> <span class="n">dbi</span> <span class="o">*</span> <span class="n">dbj</span> <span class="o">*</span> <span class="n">bk</span>
+                    <span class="n">hess</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">+=</span> <span class="n">c</span> <span class="o">*</span> <span class="n">dbi</span> <span class="o">*</span> <span class="n">bj</span> <span class="o">*</span> <span class="n">dbk</span>
+                    <span class="n">hess</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">+=</span> <span class="n">c</span> <span class="o">*</span> <span class="n">bi</span> <span class="o">*</span> <span class="n">dbj</span> <span class="o">*</span> <span class="n">dbk</span>
+
+        <span class="c1"># Symmetrise mixed derivatives</span>
+        <span class="n">hess</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">hess</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span>
+        <span class="n">hess</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">hess</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+        <span class="n">hess</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="n">hess</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+
+        <span class="c1"># Convert derivatives from grid to world coordinates</span>
+        <span class="n">grad</span> <span class="o">=</span> <span class="n">grad</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">inv_spacing</span>
+        <span class="n">hess</span> <span class="o">=</span> <span class="n">hess</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">outer</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">inv_spacing</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">inv_spacing</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">val</span><span class="p">,</span> <span class="n">grad</span><span class="p">,</span> <span class="n">hess</span></div>
+
+
+<div class="viewcode-block" id="BSplineAIM.value">
+<a class="viewcode-back" href="../../../ncitools.topology.html#ncitools.topology.bcp.BSplineAIM.value">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">value</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">r</span><span class="p">):</span>
+        <span class="n">val</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">compute_all</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">val</span></div>
+
+
+<div class="viewcode-block" id="BSplineAIM.gradient">
+<a class="viewcode-back" href="../../../ncitools.topology.html#ncitools.topology.bcp.BSplineAIM.gradient">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">gradient</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">r</span><span class="p">):</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">grad</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">compute_all</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">grad</span></div>
+
+
+<div class="viewcode-block" id="BSplineAIM.hessian">
+<a class="viewcode-back" href="../../../ncitools.topology.html#ncitools.topology.bcp.BSplineAIM.hessian">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">hessian</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">r</span><span class="p">):</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">hess</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">compute_all</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">hess</span></div>
+</div>
+
+
+
+<span class="c1"># ============================================================================</span>
+<span class="c1">#  Newton search for a critical point (gradient = 0)</span>
+<span class="c1"># ============================================================================</span>
+
+<div class="viewcode-block" id="newton_bcp">
+<a class="viewcode-back" href="../../../ncitools.topology.html#ncitools.topology.bcp.newton_bcp">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">newton_bcp</span><span class="p">(</span><span class="n">interp</span><span class="p">,</span> <span class="n">r0</span><span class="p">,</span> <span class="n">tol</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">,</span> <span class="n">max_iter</span><span class="o">=</span><span class="mi">200</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Find a critical point (where gradient vanishes) using Newton&#39;s method.</span>
+<span class="sd">    Returns the position or None if it fails.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">r0</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_iter</span><span class="p">):</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">grad</span><span class="p">,</span> <span class="n">hess</span> <span class="o">=</span> <span class="n">interp</span><span class="o">.</span><span class="n">compute_all</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
+        <span class="n">g_norm</span> <span class="o">=</span> <span class="n">norm</span><span class="p">(</span><span class="n">grad</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">g_norm</span> <span class="o">&lt;</span> <span class="n">tol</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">r</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">step</span> <span class="o">=</span> <span class="n">solve</span><span class="p">(</span><span class="n">hess</span><span class="p">,</span> <span class="n">grad</span><span class="p">)</span>
+        <span class="k">except</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">LinAlgError</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="n">r</span> <span class="o">=</span> <span class="n">r</span> <span class="o">-</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">step</span>   <span class="c1"># full Newton step (damping removed for speed)</span>
+    <span class="k">return</span> <span class="kc">None</span></div>
+
+
+
+<span class="c1"># ============================================================================</span>
+<span class="c1">#  AIM analysis at a critical point</span>
+<span class="c1"># ============================================================================</span>
+
+<div class="viewcode-block" id="aim_analysis">
+<a class="viewcode-back" href="../../../ncitools.topology.html#ncitools.topology.bcp.aim_analysis">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">aim_analysis</span><span class="p">(</span><span class="n">interp</span><span class="p">,</span> <span class="n">r</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute all AIM quantities at point r.&quot;&quot;&quot;</span>
+    <span class="n">rho</span><span class="p">,</span> <span class="n">grad</span><span class="p">,</span> <span class="n">hess</span> <span class="o">=</span> <span class="n">interp</span><span class="o">.</span><span class="n">compute_all</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
+    <span class="n">eigs</span> <span class="o">=</span> <span class="n">eigvalsh</span><span class="p">(</span><span class="n">hess</span><span class="p">)</span>
+    <span class="n">lap</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">eigs</span><span class="p">)</span>
+    <span class="n">lambda1</span><span class="p">,</span> <span class="n">lambda2</span><span class="p">,</span> <span class="n">lambda3</span> <span class="o">=</span> <span class="n">eigs</span>
+    <span class="n">ellipticity</span> <span class="o">=</span> <span class="p">(</span><span class="n">lambda1</span> <span class="o">/</span> <span class="n">lambda2</span><span class="p">)</span> <span class="o">-</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="n">lambda2</span> <span class="o">!=</span> <span class="mi">0</span> <span class="k">else</span> <span class="mf">0.0</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;position&quot;</span><span class="p">:</span> <span class="n">r</span><span class="o">.</span><span class="n">copy</span><span class="p">(),</span>
+        <span class="s2">&quot;rho&quot;</span><span class="p">:</span> <span class="n">rho</span><span class="p">,</span>
+        <span class="s2">&quot;laplacian&quot;</span><span class="p">:</span> <span class="n">lap</span><span class="p">,</span>
+        <span class="s2">&quot;eigenvalues&quot;</span><span class="p">:</span> <span class="n">eigs</span><span class="p">,</span>
+        <span class="s2">&quot;ellipticity&quot;</span><span class="p">:</span> <span class="n">ellipticity</span><span class="p">,</span>
+        <span class="s2">&quot;grad_norm&quot;</span><span class="p">:</span> <span class="n">norm</span><span class="p">(</span><span class="n">grad</span><span class="p">)</span>
+    <span class="p">}</span></div>
+
+
+
+<span class="c1"># ============================================================================</span>
+<span class="c1">#  Parallel search for bond critical points (BCP) between atom pairs</span>
+<span class="c1"># ============================================================================</span>
+
+<div class="viewcode-block" id="search_pair">
+<a class="viewcode-back" href="../../../ncitools.topology.html#ncitools.topology.bcp.search_pair">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">search_pair</span><span class="p">(</span><span class="n">args</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Worker function for parallel execution.</span>
+<span class="sd">    Args: (coeffs, origin, spacing, atom1, atom2)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">coeffs</span><span class="p">,</span> <span class="n">origin</span><span class="p">,</span> <span class="n">spacing</span><span class="p">,</span> <span class="n">atom1</span><span class="p">,</span> <span class="n">atom2</span> <span class="o">=</span> <span class="n">args</span>
+    <span class="c1"># Create interpolator locally (avoids pickling issues)</span>
+    <span class="n">interp</span> <span class="o">=</span> <span class="n">BSplineAIM</span><span class="p">(</span><span class="n">coeffs</span><span class="p">,</span> <span class="n">origin</span><span class="p">,</span> <span class="n">spacing</span><span class="p">)</span>
+
+    <span class="c1"># Initial guess = midpoint of the two atoms</span>
+    <span class="n">r0</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="n">atom1</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="n">atom2</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+
+    <span class="n">r_cp</span> <span class="o">=</span> <span class="n">newton_bcp</span><span class="p">(</span><span class="n">interp</span><span class="p">,</span> <span class="n">r0</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">r_cp</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="c1"># Verify it is a (3,-1) critical point (two negative eigenvalues)</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">hess</span> <span class="o">=</span> <span class="n">interp</span><span class="o">.</span><span class="n">compute_all</span><span class="p">(</span><span class="n">r_cp</span><span class="p">)</span>
+    <span class="n">eigs</span> <span class="o">=</span> <span class="n">eigvalsh</span><span class="p">(</span><span class="n">hess</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">eigs</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">)</span> <span class="o">==</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">aim_analysis</span><span class="p">(</span><span class="n">interp</span><span class="p">,</span> <span class="n">r_cp</span><span class="p">)</span>
+    <span class="k">return</span> <span class="kc">None</span></div>
+
+
+
+<div class="viewcode-block" id="find_bcp_parallel">
+<a class="viewcode-back" href="../../../ncitools.topology.html#ncitools.topology.bcp.find_bcp_parallel">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">find_bcp_parallel</span><span class="p">(</span><span class="n">interp</span><span class="p">,</span> <span class="n">atoms</span><span class="p">,</span> <span class="n">cutoff</span><span class="o">=</span><span class="mf">3.0</span><span class="p">,</span> <span class="n">nproc</span><span class="o">=</span><span class="mi">4</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Find all bond critical points by scanning atom pairs up to a distance cutoff.</span>
+<span class="sd">    Parallelised with multiprocessing.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Prepare arguments for each pair</span>
+    <span class="n">pairs</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">a1</span><span class="p">,</span> <span class="n">a2</span> <span class="ow">in</span> <span class="n">itertools</span><span class="o">.</span><span class="n">combinations</span><span class="p">(</span><span class="n">atoms</span><span class="p">,</span> <span class="mi">2</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">norm</span><span class="p">(</span><span class="n">a1</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">a2</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span> <span class="o">&lt;</span> <span class="n">cutoff</span><span class="p">:</span>
+            <span class="n">pairs</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">interp</span><span class="o">.</span><span class="n">coeffs</span><span class="p">,</span> <span class="n">interp</span><span class="o">.</span><span class="n">origin</span><span class="p">,</span> <span class="n">interp</span><span class="o">.</span><span class="n">spacing</span><span class="p">,</span> <span class="n">a1</span><span class="p">,</span> <span class="n">a2</span><span class="p">))</span>
+
+    <span class="c1"># Run in parallel</span>
+    <span class="k">with</span> <span class="n">ProcessPoolExecutor</span><span class="p">(</span><span class="n">max_workers</span><span class="o">=</span><span class="n">nproc</span><span class="p">)</span> <span class="k">as</span> <span class="n">executor</span><span class="p">:</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">executor</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">search_pair</span><span class="p">,</span> <span class="n">pairs</span><span class="p">))</span>
+
+    <span class="c1"># Filter out None</span>
+    <span class="n">cps</span> <span class="o">=</span> <span class="p">[</span><span class="n">r</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span> <span class="k">if</span> <span class="n">r</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">]</span>
+
+    <span class="c1"># Remove duplicates (cluster within 0.1 Å)</span>
+    <span class="k">if</span> <span class="n">cps</span><span class="p">:</span>
+        <span class="n">coords</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">cp</span><span class="p">[</span><span class="s2">&quot;position&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">cp</span> <span class="ow">in</span> <span class="n">cps</span><span class="p">])</span>
+        <span class="n">tree</span> <span class="o">=</span> <span class="n">cKDTree</span><span class="p">(</span><span class="n">coords</span><span class="p">)</span>
+        <span class="n">groups</span> <span class="o">=</span> <span class="n">tree</span><span class="o">.</span><span class="n">query_ball_tree</span><span class="p">(</span><span class="n">tree</span><span class="p">,</span> <span class="n">r</span><span class="o">=</span><span class="mf">0.1</span><span class="p">)</span>
+        <span class="n">unique</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">used</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">group</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">groups</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">used</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="n">used</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">group</span><span class="p">)</span>
+            <span class="n">unique</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">cps</span><span class="p">[</span><span class="n">i</span><span class="p">])</span>
+        <span class="k">return</span> <span class="n">unique</span>
+    <span class="k">return</span> <span class="p">[]</span></div>
+
+
+<div class="viewcode-block" id="enrich_bcps_with_types">
+<a class="viewcode-back" href="../../../ncitools.topology.html#ncitools.topology.bcp.enrich_bcps_with_types">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">enrich_bcps_with_types</span><span class="p">(</span><span class="n">bcps</span><span class="p">,</span> <span class="n">atoms</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;For each BCP, identify the two nearest atoms and assign a contact type.&quot;&quot;&quot;</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">bcps</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">[]</span>
+    <span class="n">coords</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">atom</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="k">for</span> <span class="n">atom</span> <span class="ow">in</span> <span class="n">atoms</span><span class="p">])</span>
+    <span class="n">tree</span> <span class="o">=</span> <span class="n">cKDTree</span><span class="p">(</span><span class="n">coords</span><span class="p">)</span>
+
+    <span class="n">enriched</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">bcp</span> <span class="ow">in</span> <span class="n">bcps</span><span class="p">:</span>
+        <span class="n">pos</span> <span class="o">=</span> <span class="n">bcp</span><span class="p">[</span><span class="s1">&#39;position&#39;</span><span class="p">]</span>
+        <span class="c1"># два ближайших атома</span>
+        <span class="n">dists</span><span class="p">,</span> <span class="n">indices</span> <span class="o">=</span> <span class="n">tree</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">pos</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+        <span class="n">atom1</span> <span class="o">=</span> <span class="n">atoms</span><span class="p">[</span><span class="n">indices</span><span class="p">[</span><span class="mi">0</span><span class="p">]]</span>
+        <span class="n">atom2</span> <span class="o">=</span> <span class="n">atoms</span><span class="p">[</span><span class="n">indices</span><span class="p">[</span><span class="mi">1</span><span class="p">]]</span>
+
+        <span class="n">sym1</span> <span class="o">=</span> <span class="n">get_symbol</span><span class="p">(</span><span class="n">atom1</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+        <span class="n">sym2</span> <span class="o">=</span> <span class="n">get_symbol</span><span class="p">(</span><span class="n">atom2</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+
+        <span class="n">has_H1</span> <span class="o">=</span> <span class="p">(</span><span class="n">atom1</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="n">has_H2</span> <span class="o">=</span> <span class="p">(</span><span class="n">atom2</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span><span class="p">)</span>
+
+        <span class="n">bcp_copy</span> <span class="o">=</span> <span class="n">bcp</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+        <span class="n">bcp_copy</span><span class="p">[</span><span class="s1">&#39;atom1&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">indices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">bcp_copy</span><span class="p">[</span><span class="s1">&#39;atom2&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">indices</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+
+        <span class="c1"># Обрабатываем все возможные комбинации наличия водорода</span>
+        <span class="k">if</span> <span class="n">has_H1</span> <span class="ow">and</span> <span class="n">has_H2</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="k">elif</span> <span class="n">has_H1</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">has_H2</span><span class="p">:</span>
+            <span class="c1"># атом1 – водород, атом2 – акцептор</span>
+            <span class="n">donor_idx</span> <span class="o">=</span> <span class="n">find_donor</span><span class="p">(</span><span class="n">indices</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">atoms</span><span class="p">,</span> <span class="n">exclude_idx</span><span class="o">=</span><span class="n">indices</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+            <span class="k">if</span> <span class="n">donor_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">donor_sym</span> <span class="o">=</span> <span class="n">get_symbol</span><span class="p">(</span><span class="n">atoms</span><span class="p">[</span><span class="n">donor_idx</span><span class="p">][</span><span class="mi">0</span><span class="p">])</span>
+                <span class="n">contact_type</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">donor_sym</span><span class="si">}</span><span class="s2">-H...</span><span class="si">{</span><span class="n">sym2</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">contact_type</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">sym1</span><span class="si">}</span><span class="s2">-</span><span class="si">{</span><span class="n">sym2</span><span class="si">}</span><span class="s2">&quot;</span>   <span class="c1"># fallback (донор не найден)</span>
+        <span class="k">elif</span> <span class="ow">not</span> <span class="n">has_H1</span> <span class="ow">and</span> <span class="n">has_H2</span><span class="p">:</span>
+            <span class="c1"># атом2 – водород, атом1 – акцептор</span>
+            <span class="n">donor_idx</span> <span class="o">=</span> <span class="n">find_donor</span><span class="p">(</span><span class="n">indices</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">atoms</span><span class="p">,</span> <span class="n">exclude_idx</span><span class="o">=</span><span class="n">indices</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+            <span class="k">if</span> <span class="n">donor_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">donor_sym</span> <span class="o">=</span> <span class="n">get_symbol</span><span class="p">(</span><span class="n">atoms</span><span class="p">[</span><span class="n">donor_idx</span><span class="p">][</span><span class="mi">0</span><span class="p">])</span>
+                <span class="n">contact_type</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">donor_sym</span><span class="si">}</span><span class="s2">-H...</span><span class="si">{</span><span class="n">sym1</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">contact_type</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">sym1</span><span class="si">}</span><span class="s2">-</span><span class="si">{</span><span class="n">sym2</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># нет водорода – обычный нековалентный контакт между двумя тяжёлыми атомами</span>
+            <span class="n">contact_type</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">sym1</span><span class="si">}</span><span class="s2">-</span><span class="si">{</span><span class="n">sym2</span><span class="si">}</span><span class="s2">&quot;</span>
+
+        <span class="n">bcp_copy</span><span class="p">[</span><span class="s1">&#39;contact_type&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">contact_type</span>
+        <span class="n">enriched</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">bcp_copy</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">enriched</span></div>
+
+
+<div class="viewcode-block" id="find_nci">
+<a class="viewcode-back" href="../../../ncitools.topology.html#ncitools.topology.bcp.find_nci">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">find_nci</span><span class="p">(</span><span class="n">bcps</span><span class="p">,</span> <span class="n">atoms</span><span class="p">,</span> <span class="n">rho_min</span><span class="o">=</span><span class="mf">0.001</span><span class="p">,</span> <span class="n">rho_max</span><span class="o">=</span><span class="mf">0.1</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Filter BCPs by density and add contact type information.&quot;&quot;&quot;</span>
+    <span class="n">bcps_filtered</span> <span class="o">=</span> <span class="p">[</span><span class="n">bcp</span> <span class="k">for</span> <span class="n">bcp</span> <span class="ow">in</span> <span class="n">bcps</span> <span class="k">if</span> <span class="n">rho_min</span> <span class="o">&lt;=</span> <span class="n">bcp</span><span class="p">[</span><span class="s1">&#39;rho&#39;</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="n">rho_max</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">enrich_bcps_with_types</span><span class="p">(</span><span class="n">bcps_filtered</span><span class="p">,</span> <span class="n">atoms</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="build_graph_with_nci">
+<a class="viewcode-back" href="../../../ncitools.topology.html#ncitools.topology.bcp.build_graph_with_nci">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">build_graph_with_nci</span><span class="p">(</span><span class="n">bcps</span><span class="p">,</span> <span class="n">atoms</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Build a NetworkX graph where edges are NCI (from bcps).&quot;&quot;&quot;</span>
+    <span class="n">G</span> <span class="o">=</span> <span class="n">nx</span><span class="o">.</span><span class="n">Graph</span><span class="p">()</span>
+    <span class="n">G</span><span class="o">.</span><span class="n">add_nodes_from</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">atoms</span><span class="p">)))</span>
+    <span class="k">for</span> <span class="n">bcp</span> <span class="ow">in</span> <span class="n">tqdm</span><span class="p">(</span><span class="n">bcps</span><span class="p">,</span> <span class="n">desc</span><span class="o">=</span><span class="s1">&#39;Building graph from BCPs&#39;</span><span class="p">):</span>
+        <span class="n">G</span><span class="o">.</span><span class="n">add_edge</span><span class="p">(</span><span class="n">bcp</span><span class="p">[</span><span class="s1">&#39;atom1&#39;</span><span class="p">],</span> <span class="n">bcp</span><span class="p">[</span><span class="s1">&#39;atom2&#39;</span><span class="p">],</span>
+                   <span class="n">bond_type</span><span class="o">=</span><span class="n">bcp</span><span class="p">[</span><span class="s1">&#39;contact_type&#39;</span><span class="p">],</span>
+                   <span class="n">position</span><span class="o">=</span><span class="n">bcp</span><span class="p">[</span><span class="s1">&#39;position&#39;</span><span class="p">],</span>
+                   <span class="n">rho</span><span class="o">=</span><span class="n">bcp</span><span class="p">[</span><span class="s1">&#39;rho&#39;</span><span class="p">],</span>
+                   <span class="n">laplacian</span><span class="o">=</span><span class="n">bcp</span><span class="p">[</span><span class="s1">&#39;laplacian&#39;</span><span class="p">],</span>
+                   <span class="n">eigenvalues</span><span class="o">=</span><span class="n">bcp</span><span class="p">[</span><span class="s1">&#39;eigenvalues&#39;</span><span class="p">],</span>
+                   <span class="n">ellipticity</span><span class="o">=</span><span class="n">bcp</span><span class="p">[</span><span class="s1">&#39;ellipticity&#39;</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">G</span></div>
+
+
+
+<div class="viewcode-block" id="output">
+<a class="viewcode-back" href="../../../ncitools.topology.html#ncitools.topology.bcp.output">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">output</span><span class="p">(</span><span class="n">G</span><span class="p">:</span> <span class="n">nx</span><span class="o">.</span><span class="n">classes</span><span class="o">.</span><span class="n">graph</span><span class="o">.</span><span class="n">Graph</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="s1">&#39;default&#39;</span><span class="p">,</span> <span class="n">ext</span><span class="o">=</span><span class="s1">&#39;.default&#39;</span><span class="p">,</span> <span class="n">correlation</span><span class="o">=</span><span class="n">correlation_1</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Write NCI results to a .nci file (topological analysis).&quot;&quot;&quot;</span>
+
+    <span class="n">now</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span>
+    <span class="n">nci_list</span> <span class="o">=</span> <span class="p">[</span><span class="n">i</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">G</span><span class="o">.</span><span class="n">edges</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">i</span><span class="p">[</span><span class="mi">1</span><span class="p">][</span><span class="s1">&#39;bond_type&#39;</span><span class="p">]</span> <span class="o">!=</span> <span class="s1">&#39;covalent&#39;</span><span class="p">]</span>
+
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">filename</span><span class="si">}</span><span class="s1">.nci&#39;</span><span class="p">,</span> <span class="s1">&#39;w&#39;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s1">&#39;utf-8&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;AIM-NCI: non-covalent interactions.              Date: </span><span class="si">{</span><span class="n">now</span><span class="si">}</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Uploaded file: </span><span class="si">{</span><span class="n">filename</span><span class="si">}{</span><span class="n">ext</span><span class="si">}</span><span class="se">\n\n</span><span class="s1">&#39;</span><span class="p">)</span>
+
+        <span class="c1"># Заголовок: добавлен столбец Type после номера BCP</span>
+        <span class="n">header</span> <span class="o">=</span> <span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;BCP&#39;</span><span class="si">:</span><span class="s2">&gt;5</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="s1">&#39;Type&#39;</span><span class="si">:</span><span class="s2">&gt;13</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="s1">&#39;X (Å)&#39;</span><span class="si">:</span><span class="s2">&gt;12</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="s1">&#39;Y (Å)&#39;</span><span class="si">:</span><span class="s2">&gt;12</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="s1">&#39;Z (Å)&#39;</span><span class="si">:</span><span class="s2">&gt;12</span><span class="si">}</span><span class="s2"> &quot;</span>
+                  <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;ρ (e/bohr³)&#39;</span><span class="si">:</span><span class="s2">&gt;16</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="s1">&#39;∇²ρ (e/bohr⁵)&#39;</span><span class="si">:</span><span class="s2">&gt;12</span><span class="si">}</span><span class="s2"> &quot;</span>
+                  <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;λ1&#39;</span><span class="si">:</span><span class="s2">&gt;6</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="s1">&#39;λ2&#39;</span><span class="si">:</span><span class="s2">&gt;12</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="s1">&#39;λ3&#39;</span><span class="si">:</span><span class="s2">&gt;12</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="s1">&#39;ε&#39;</span><span class="si">:</span><span class="s2">&gt;10</span><span class="si">}</span><span class="s2">    </span><span class="si">{</span><span class="s1">&#39;Energy (kcal/mol)&#39;</span><span class="si">:</span><span class="s2">&gt;10</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">header</span> <span class="o">+</span> <span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">nci_list</span><span class="p">:</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s1">&#39;No non-covalent interactions found.</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s1">&#39;Buy developer a coffee!</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">index</span><span class="p">,</span> <span class="n">bcp</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">nci_list</span><span class="p">):</span>
+                <span class="n">x</span> <span class="o">=</span> <span class="n">bcp</span><span class="p">[</span><span class="s1">&#39;position&#39;</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">bohr_to_angstrom</span>
+                <span class="n">y</span> <span class="o">=</span> <span class="n">bcp</span><span class="p">[</span><span class="s1">&#39;position&#39;</span><span class="p">][</span><span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">bohr_to_angstrom</span>
+                <span class="n">z</span> <span class="o">=</span> <span class="n">bcp</span><span class="p">[</span><span class="s1">&#39;position&#39;</span><span class="p">][</span><span class="mi">2</span><span class="p">]</span> <span class="o">*</span> <span class="n">bohr_to_angstrom</span>
+                <span class="n">rho</span> <span class="o">=</span> <span class="n">bcp</span><span class="p">[</span><span class="s1">&#39;rho&#39;</span><span class="p">]</span>
+                <span class="n">lap</span> <span class="o">=</span> <span class="n">bcp</span><span class="p">[</span><span class="s1">&#39;laplacian&#39;</span><span class="p">]</span>
+                <span class="n">eigs</span> <span class="o">=</span> <span class="n">bcp</span><span class="p">[</span><span class="s1">&#39;eigenvalues&#39;</span><span class="p">]</span>
+                <span class="n">eps</span> <span class="o">=</span> <span class="n">bcp</span><span class="p">[</span><span class="s1">&#39;ellipticity&#39;</span><span class="p">]</span>
+                <span class="n">typ</span> <span class="o">=</span> <span class="n">bcp</span><span class="p">[</span><span class="s1">&#39;bond_type&#39;</span><span class="p">]</span>
+                <span class="n">energy</span> <span class="o">=</span> <span class="n">correlation</span><span class="p">(</span><span class="n">rho</span><span class="p">,</span> <span class="n">typ</span><span class="p">)</span>
+
+                <span class="n">line</span> <span class="o">=</span> <span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">index</span><span class="o">+</span><span class="mi">1</span><span class="si">:</span><span class="s2">5d</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">typ</span><span class="si">:</span><span class="s2">&gt;15</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">x</span><span class="si">:</span><span class="s2">12.7f</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">y</span><span class="si">:</span><span class="s2">12.7f</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">z</span><span class="si">:</span><span class="s2">12.7f</span><span class="si">}</span><span class="s2"> &quot;</span>
+                        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">rho</span><span class="si">:</span><span class="s2">12.7f</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">lap</span><span class="si">:</span><span class="s2">12.7f</span><span class="si">}</span><span class="s2"> &quot;</span>
+                        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">eigs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">:</span><span class="s2">12.7f</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">eigs</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">:</span><span class="s2">12.7f</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">eigs</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="si">:</span><span class="s2">12.7f</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">eps</span><span class="si">:</span><span class="s2">10.6f</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">energy</span><span class="si">:</span><span class="s2">10.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">line</span> <span class="o">+</span> <span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+
+            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s1">&#39;Buy developer a coffee!</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span></div>
+
+
+<span class="c1"># ============================================================================</span>
+<span class="c1">#  Main script</span>
+<span class="c1"># ============================================================================</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">cube_file</span> <span class="o">=</span> <span class="nb">input</span><span class="p">(</span><span class="s2">&quot;Enter the path to the cube file: &quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s1">&#39;&quot;&#39;</span><span class="p">,</span><span class="s1">&#39;&#39;</span><span class="p">)</span>
+    <span class="n">filename</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">basename</span><span class="p">(</span><span class="n">cube_file</span><span class="p">)</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s1">&#39;.&#39;</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">abs_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">cube_file</span><span class="p">)</span>
+    <span class="n">ext</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">splitext</span><span class="p">(</span><span class="n">cube_file</span><span class="p">)[</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">chdir</span><span class="p">(</span><span class="n">abs_dir</span><span class="p">)</span>
+
+    <span class="c1"># Чтение</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;Reading electron density...&#39;</span><span class="p">)</span>
+    <span class="n">origin</span><span class="p">,</span> <span class="n">spacing</span><span class="p">,</span> <span class="n">density</span><span class="p">,</span> <span class="n">atoms</span> <span class="o">=</span> <span class="n">read_cube</span><span class="p">(</span><span class="n">cube_file</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;Reading is done!&#39;</span><span class="p">)</span>
+
+    <span class="c1"># Интерполятор</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;Starting interpolation of grid data&#39;</span><span class="p">)</span>
+    <span class="n">interp</span> <span class="o">=</span> <span class="n">BSplineAIM</span><span class="o">.</span><span class="n">from_density</span><span class="p">(</span><span class="n">density</span><span class="p">,</span> <span class="n">origin</span><span class="p">,</span> <span class="n">spacing</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;Interpolation completed&#39;</span><span class="p">)</span>
+
+    <span class="c1"># Поиск всех BCP</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;Starting topological analysis...&#39;</span><span class="p">)</span>
+    <span class="n">bcps</span> <span class="o">=</span> <span class="n">find_bcp_parallel</span><span class="p">(</span>
+        <span class="n">interp</span><span class="p">,</span>
+        <span class="n">atoms</span><span class="p">,</span>
+        <span class="n">cutoff</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span>
+        <span class="n">nproc</span><span class="o">=</span><span class="mi">8</span>
+    <span class="p">)</span>
+
+
+    <span class="c1"># Отбор NCI по плотности и определение типов</span>
+    <span class="n">nci_list</span> <span class="o">=</span> <span class="n">find_nci</span><span class="p">(</span><span class="n">bcps</span><span class="p">,</span> <span class="n">atoms</span><span class="p">,</span> <span class="n">rho_min</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">)</span>
+    <span class="n">G</span> <span class="o">=</span> <span class="n">build_graph_with_nci</span><span class="p">(</span><span class="n">nci_list</span><span class="p">,</span> <span class="n">atoms</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Non-covalent interactions found: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">nci_list</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Запись в файл</span>
+    <span class="n">output</span><span class="p">(</span><span class="n">G</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="n">filename</span><span class="p">,</span> <span class="n">ext</span><span class="o">=</span><span class="n">ext</span><span class="p">)</span>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, Mark Kaplanskiy.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
