@@ -17,7 +17,8 @@ from pathlib import Path
 
 # Import local modules (adjust if package structure changes)
 from ncitools.geometry.geom import (
-    find_covalent_pairs, build_graph_with_hbs, output as geom_output
+    build_graph_with_covalent_pairs, find_nci_with_aromatic, find_carbonyl_interactions,
+    find_nci_bonds, output as geom_output
 )
 from ncitools.topology.bcp import (
     read_cube, BSplineAIM, find_bcp_parallel, find_nci,
@@ -58,10 +59,19 @@ def geom(input_file, output, angle_tol, tolerance, radii):
     vdw_radii = BONDI if radii == 'bondi' else RADII
 
     # Find covalent pairs (using covalent radii + tolerance)
-    cov_pairs = find_covalent_pairs(atoms, radii=RADII, tolerance=tolerance)
+    G = build_graph_with_covalent_pairs(atoms, radii=RADII, tolerance=tolerance)
 
-    # Build graph with hydrogen bonds
-    G = build_graph_with_hbs(atoms, cov_pairs, radii=vdw_radii, angle_tol=angle_tol)
+    # Build graph with NCIs
+    G = find_nci_bonds(atoms, G, ['H'],                      120, 'HB',
+                       desc='Searching for hydrogen bonds')
+    G = find_nci_bonds(atoms, G, ['Cl', 'Br', 'I'],         150, 'XB',
+                       desc='Searching for halogen bonds')
+    G = find_nci_bonds(atoms, G, ['S', 'Se', 'Te'],         150, 'ChB',
+                       desc='Searching for chalcogen bonds')
+    G = find_nci_bonds(atoms, G, ['P', 'As', 'Sb', 'Bi'],   150, 'PnB',
+                       desc='Searching for pnictogen bonds')
+    G = find_nci_with_aromatic(atoms, G)
+    G = find_carbonyl_interactions(atoms, G)
 
     # Write output
     geom_output(G, filename=output, ext=os.path.splitext(input_file)[1])
