@@ -1,751 +1,1443 @@
 """
-Topological analysis of electron density: BCP search, NCI filtering, energy estimation.
+NCITools
+========
+
+Fast brute-force QTAIM-like analysis of electron-density CUBE files.
+
+Pipeline
+--------
+1. Read Gaussian/compatible CUBE.
+2. Detect coordinate units from the CUBE unit flag.
+3. Convert all geometry internally to Bohr.
+4. Build cubic B-spline representation of rho.
+5. Generate candidate atom pairs within user-defined radius.
+6. Single-start Newton search for stationary points of rho (midpoint seed).
+7. Keep only non-degenerate (3,-1) critical points.
+8. Verify that CP belongs to the considered atom pair (geometry).
+9. Deduplicate CPs globally by position.
+10. Filter out NCI candidates with negative Laplacian and other artifacts.
+11. Separate likely covalent and non-covalent contacts.
+12. Classify NCI contacts geometrically:
+       HB
+       XB
+       ChB
+       PnB
+       H-pi
+       n-pi
+       pi-pi stacking
+       T-stacking
+       n->pi*
+       unclassified
+13. Write .nci output.
+
+IMPORTANT
+---------
+This is a fast screening algorithm, not a full QTAIM atomic-basin /
+bond-path tracer.
+
+A (3,-1) CP is a topological object. Its chemical interpretation
+requires additional chemical/geometrical criteria. The code therefore
+deliberately uses conservative "unclassified" output rather than
+forcing every CP into a chemical category.
 """
 
-import numpy as np
-from scipy.ndimage import spline_filter
-from scipy.spatial import cKDTree
-from numpy.linalg import solve, eigvalsh, norm
-from concurrent.futures import ProcessPoolExecutor
-import itertools
-import networkx as nx
-from tqdm import tqdm
-from datetime import datetime
+from __future__ import annotations
+
 import os
-from tabulate import tabulate
 import random
 import textwrap
+from concurrent.futures import ProcessPoolExecutor
+from datetime import datetime
+from typing import Optional, Union, List, Dict, Any, Tuple
+
+import networkx as nx
+import numpy as np
+from numpy.linalg import eigvalsh, norm, solve
+from scipy.ndimage import spline_filter
+from scipy.spatial import cKDTree
+from tqdm import tqdm
 
 from ncitools.quotes import quotes
-from ncitools.correlations import correlation_1   # default energy estimator
+from ncitools.correlations import correlation_1
 from ncitools.utils import get_symbol
-from ncitools.constants import bohr_to_angstrom, BONDI
+from ncitools.constants import bohr_to_angstrom, RADII, BONDI
 
-# =========================================================
-# 1. Быстрое чтение cube
-# =========================================================
 
-def read_cube(filename):
+ANGSTROM_TO_BOHR: float = 1.0 / bohr_to_angstrom
 
-    with open(filename, 'r') as f:
+
+# ============================================================================
+# 1. Atomic radii
+# ============================================================================
+
+def covalent_radius(symbol: str) -> float:
+    """Return covalent radius in Angstrom."""
+    return RADII.get(symbol, 1.50)
+
+
+def bond_cutoff_angstrom(
+    symbol1: str,
+    symbol2: str,
+    scale: float = 1.25,
+) -> float:
+    """
+    Maximum distance used for a geometry-based covalent assignment.
+
+    The value is deliberately somewhat generous because the purpose
+    is screening, not rigorous bond-order determination.
+    """
+    return scale * (covalent_radius(symbol1) + covalent_radius(symbol2))
+
+
+# ============================================================================
+# 2. CUBE reader
+# ============================================================================
+
+class CubeData:
+    """
+    Container for a parsed CUBE file.
+
+    All coordinates and grid vectors are converted to Bohr internally.
+    """
+
+    def __init__(
+        self,
+        origin: np.ndarray,
+        axes: np.ndarray,
+        density: np.ndarray,
+        atoms: List[Tuple[int, np.ndarray]],
+        coordinate_units: str,
+        comments: List[str],
+    ) -> None:
+        self.origin = np.asarray(origin, dtype=float)
+        self.axes = np.asarray(axes, dtype=float)
+        self.density = np.asarray(density, dtype=float)
+        self.atoms = atoms
+        self.coordinate_units = coordinate_units
+        self.comments = comments
+        self.shape = self.density.shape
+
+    @property
+    def spacing(self) -> np.ndarray:
+        """Voxel-vector lengths in Bohr."""
+        return np.linalg.norm(self.axes, axis=1)
+
+
+def _detect_cube_units(
+    voxel_counts: np.ndarray,
+    requested: str = "auto",
+) -> str:
+    """
+    Detect coordinate units from the CUBE grid-count sign convention.
+
+    Traditional Gaussian-style CUBE convention:
+        positive -> Bohr
+        negative -> Angstrom
+
+    Mixed signs are ambiguous for a shared origin and are rejected
+    in auto mode.
+    """
+    requested = requested.lower()
+    if requested in {"bohr", "angstrom"}:
+        return requested
+    if requested != "auto":
+        raise ValueError("cube_units must be 'auto', 'bohr' or 'angstrom'")
+
+    signs = np.sign(voxel_counts)
+    if np.all(signs > 0):
+        return "bohr"
+    if np.all(signs < 0):
+        return "angstrom"
+    raise ValueError(
+        "CUBE file contains mixed-sign voxel counts. "
+        "The coordinate units cannot be inferred safely. "
+        "Use cube_units='bohr' or cube_units='angstrom'."
+    )
+
+
+def read_cube(
+    filename: str,
+    cube_units: str = "auto",
+) -> CubeData:
+    """
+    Read a Gaussian-style CUBE file.
+
+    Parameters
+    ----------
+    filename
+        Input CUBE filename.
+    cube_units
+        'auto', 'bohr' or 'angstrom'.
+
+    Returns
+    -------
+    CubeData
+        Coordinates and grid vectors are stored internally in Bohr.
+    """
+    with open(filename, "r", encoding="utf-8") as f:
         lines = f.readlines()
 
-    natoms = int(float(lines[2].split()[0]))
-    origin = np.array(list(map(float, lines[2].split()[1:4])))
+    if len(lines) < 6:
+        raise ValueError("File is too short to be a valid CUBE file.")
 
-    nx, dx = int(float(lines[3].split()[0])), float(lines[3].split()[1])
-    ny, dy = int(float(lines[4].split()[0])), float(lines[4].split()[2])
-    nz, dz = int(float(lines[5].split()[0])), float(lines[5].split()[3])
+    comments = lines[:2]
+    header = lines[2].split()
 
-    spacing = np.array([dx, dy, dz])
+    natoms_raw = int(float(header[0]))
+    natoms = abs(natoms_raw)
 
+    origin = np.array(list(map(float, header[1:4])), dtype=float)
+
+    # Standard CUBE: Nx vx vy vz, Ny ..., Nz ...
+    grid_counts = []
+    axes = []
+    for line_number in range(3, 6):
+        parts = lines[line_number].split()
+        count = int(float(parts[0]))
+        vector = np.array(list(map(float, parts[1:4])), dtype=float)
+        grid_counts.append(count)
+        axes.append(vector)
+
+    grid_counts = np.asarray(grid_counts, dtype=int)
+    axes = np.asarray(axes, dtype=float)
+
+    units = _detect_cube_units(grid_counts, cube_units)
+    scale = 1.0 if units == "bohr" else ANGSTROM_TO_BOHR
+
+    origin *= scale
+    axes *= scale
+
+    # Atom records
     atoms = []
+    atom_start = 6
     for i in range(natoms):
-        parts = lines[6 + i].split()
+        parts = lines[atom_start + i].split()
+        if len(parts) < 5:
+            raise ValueError(f"Malformed atom record at line {atom_start + i + 1}.")
         Z = int(float(parts[0]))
-        coord = np.array(list(map(float, parts[2:5])))
+        coord = np.array(list(map(float, parts[2:5])), dtype=float) * scale
         atoms.append((Z, coord))
 
-    data = np.fromstring(" ".join(lines[6 + natoms:]), sep=" ")
-    density = data.reshape((nx, ny, nz))
+    # Volumetric data
+    data_start = atom_start + natoms
+    data_text = " ".join(lines[data_start:])
+    density = np.fromstring(data_text, sep=" ", dtype=float)
+    expected_size = int(np.prod(np.abs(grid_counts)))
+    if density.size < expected_size:
+        raise ValueError(f"CUBE contains only {density.size} grid values, expected {expected_size}.")
+    density = density[:expected_size]
+    shape = tuple(np.abs(grid_counts))
+    density = density.reshape(shape)
 
-    return origin, spacing, density, atoms
+    return CubeData(
+        origin=origin,
+        axes=axes,
+        density=density,
+        atoms=atoms,
+        coordinate_units=units,
+        comments=comments,
+    )
+
 
 # ============================================================================
-#  B‑spline basis functions (cubic, order 3) and their derivatives
+# 3. Cubic B-spline basis
 # ============================================================================
 
-def basis(t):
-    """Cubic B‑spline basis function β(t)."""
-    t = np.asarray(t)
+def basis(t: np.ndarray) -> np.ndarray:
+    """Centered cubic B-spline basis β(t)."""
+    t = np.asarray(t, dtype=float)
     result = np.zeros_like(t)
-    # intervals
-    m1 = (t >= -2) & (t <= -1)
-    m2 = (t > -1) & (t <= 0)
-    m3 = (t > 0) & (t <= 1)
-    m4 = (t > 1) & (t <= 2)
+
+    m1 = (t >= -2.0) & (t <= -1.0)
+    m2 = (t > -1.0) & (t <= 0.0)
+    m3 = (t > 0.0) & (t <= 1.0)
+    m4 = (t > 1.0) & (t <= 2.0)
+
     t1 = t[m1]
-    result[m1] = (1.0/6.0) * (t1 + 2.0)**3
     t2 = t[m2]
-    result[m2] = (1.0/6.0) * (-3.0*t2**3 - 6.0*t2**2 + 4.0)
     t3 = t[m3]
-    result[m3] = (1.0/6.0) * ( 3.0*t3**3 - 6.0*t3**2 + 4.0)
     t4 = t[m4]
-    result[m4] = (1.0/6.0) * (2.0 - t4)**3
+
+    result[m1] = ((t1 + 2.0) ** 3) / 6.0
+    result[m2] = (-3.0 * t2**3 - 6.0 * t2**2 + 4.0) / 6.0
+    result[m3] = (3.0 * t3**3 - 6.0 * t3**2 + 4.0) / 6.0
+    result[m4] = ((2.0 - t4) ** 3) / 6.0
+
     return result
 
-def basis_deriv1(t):
-    """First derivative β'(t)."""
-    t = np.asarray(t)
+
+def basis_deriv1(t: np.ndarray) -> np.ndarray:
+    """First derivative of centered cubic B-spline."""
+    t = np.asarray(t, dtype=float)
     result = np.zeros_like(t)
-    m1 = (t >= -2) & (t <= -1)
-    m2 = (t > -1) & (t <= 0)
-    m3 = (t > 0) & (t <= 1)
-    m4 = (t > 1) & (t <= 2)
+
+    m1 = (t >= -2.0) & (t <= -1.0)
+    m2 = (t > -1.0) & (t <= 0.0)
+    m3 = (t > 0.0) & (t <= 1.0)
+    m4 = (t > 1.0) & (t <= 2.0)
+
     t1 = t[m1]
-    result[m1] = 0.5 * (t1 + 2.0)**2
     t2 = t[m2]
-    result[m2] = 0.5 * (-3.0*t2**2 - 4.0*t2)
     t3 = t[m3]
-    result[m3] = 0.5 * ( 3.0*t3**2 - 4.0*t3)
     t4 = t[m4]
-    result[m4] = -0.5 * (2.0 - t4)**2
+
+    result[m1] = 0.5 * (t1 + 2.0) ** 2
+    result[m2] = 0.5 * (-3.0 * t2**2 - 4.0 * t2)
+    result[m3] = 0.5 * (3.0 * t3**2 - 4.0 * t3)
+    result[m4] = -0.5 * (2.0 - t4) ** 2
+
     return result
 
-def basis_deriv2(t):
-    """Second derivative β''(t)."""
-    t = np.asarray(t)
+
+def basis_deriv2(t: np.ndarray) -> np.ndarray:
+    """Second derivative of centered cubic B-spline."""
+    t = np.asarray(t, dtype=float)
     result = np.zeros_like(t)
-    m1 = (t >= -2) & (t <= -1)
-    m2 = (t > -1) & (t <= 0)
-    m3 = (t > 0) & (t <= 1)
-    m4 = (t > 1) & (t <= 2)
+
+    m1 = (t >= -2.0) & (t <= -1.0)
+    m2 = (t > -1.0) & (t <= 0.0)
+    m3 = (t > 0.0) & (t <= 1.0)
+    m4 = (t > 1.0) & (t <= 2.0)
+
     t1 = t[m1]
+    t2 = t[m2]
+    t3 = t[m3]
+    t4 = t[m4]
+
     result[m1] = t1 + 2.0
-    t2 = t[m2]
-    result[m2] = -3.0*t2 - 2.0
-    t3 = t[m3]
-    result[m3] =  3.0*t3 - 2.0
-    t4 = t[m4]
+    result[m2] = -3.0 * t2 - 2.0
+    result[m3] = 3.0 * t3 - 2.0
     result[m4] = 2.0 - t4
+
     return result
 
+
 # ============================================================================
-#  B‑spline interpolator with analytical derivatives
+# 4. B-spline interpolator
 # ============================================================================
 
 class BSplineAIM:
     """
-    Interpolator for a 3D scalar field (electron density) using cubic B‑splines.
-    Provides value, gradient and Hessian at any point in world coordinates.
+    Cubic B-spline interpolator for a 3D density.
+
+    Internal coordinates are Cartesian Bohr.
+
+    The CUBE grid vectors may be non-orthogonal:
+
+        r = origin + g0 * a0 + g1 * a1 + g2 * a2
+
+    Therefore grid -> Cartesian derivatives use the full Jacobian.
     """
 
-    def __init__(self, coeffs, origin, spacing):
-        self.coeffs = coeffs                 # spline coefficients (same shape as density)
-        self.origin = np.asarray(origin)     # (x0, y0, z0)
-        self.spacing = np.asarray(spacing)   # (dx, dy, dz)
-        self.inv_spacing = 1.0 / self.spacing
+    def __init__(self, coeffs: np.ndarray, origin: np.ndarray, axes: np.ndarray) -> None:
+        self.coeffs = np.asarray(coeffs, dtype=float)
+        self.origin = np.asarray(origin, dtype=float)
+        self.axes = np.asarray(axes, dtype=float)
+        if self.axes.shape != (3, 3):
+            raise ValueError("axes must have shape (3, 3)")
+
+        self.axes_inv = np.linalg.inv(self.axes)
+        self.jacobian = self.axes.T
+        self.inv_jacobian = np.linalg.inv(self.jacobian)
+        self.grad_transform = self.inv_jacobian.T
+        self.hess_transform = self.inv_jacobian.T
 
     @classmethod
-    def from_density(cls, density, origin, spacing):
-        """Construct from a raw density grid (calls spline_filter internally)."""
-        coeffs = spline_filter(density, order=3)
-        return cls(coeffs, origin, spacing)
+    def from_density(
+        cls,
+        density: np.ndarray,
+        origin: np.ndarray,
+        axes: np.ndarray,
+    ) -> BSplineAIM:
+        """Build spline coefficients using scipy's spline_filter."""
+        coeffs = spline_filter(np.asarray(density, dtype=float), order=3, mode="mirror")
+        return cls(coeffs, origin, axes)
 
-    def world_to_grid(self, r):
-        """Convert world coordinates to grid (pixel) coordinates."""
-        return (r - self.origin) * self.inv_spacing
+    def world_to_grid(self, r: np.ndarray) -> np.ndarray:
+        """Convert Cartesian Bohr coordinates to grid coordinates."""
+        r = np.asarray(r, dtype=float)
+        return self.inv_jacobian @ (r - self.origin)
 
-    def _local_coeffs_and_weights(self, g):
+    def _local_data(self, g: np.ndarray) -> Optional[Tuple]:
         """
-        For a grid point g = (x,y,z) (float) return the indices of the
-        surrounding knots and the basis function values (and derivatives)
-        needed to evaluate the spline.
+        Return the local 4x4x4 spline stencil.
+
+        Points too close to the grid boundary are rejected instead
+        of silently clipping indices. This avoids introducing an
+        artificial density derivative caused by the old clipping
+        strategy.
         """
-        # Indices of the knot left of g
+        shape = self.coeffs.shape
+        if np.any(g < 1.0) or np.any(g > np.asarray(shape) - 3.0):
+            return None
+
         i0 = int(np.floor(g[0]))
         j0 = int(np.floor(g[1]))
         k0 = int(np.floor(g[2]))
 
-        # Candidate indices (4 per direction because cubic spline support = [-2,2])
-        i_cand = np.arange(i0 - 1, i0 + 3)
-        j_cand = np.arange(j0 - 1, j0 + 3)
-        k_cand = np.arange(k0 - 1, k0 + 3)
+        i = np.arange(i0 - 1, i0 + 3, dtype=int)
+        j = np.arange(j0 - 1, j0 + 3, dtype=int)
+        k = np.arange(k0 - 1, k0 + 3, dtype=int)
 
-        # Clip to the valid range (grid boundary handling, similar to 'nearest')
-        shape = self.coeffs.shape
-        i_inds = np.unique(np.clip(i_cand, 0, shape[0] - 1))
-        j_inds = np.unique(np.clip(j_cand, 0, shape[1] - 1))
-        k_inds = np.unique(np.clip(k_cand, 0, shape[2] - 1))
+        ti = g[0] - i
+        tj = g[1] - j
+        tk = g[2] - k
 
-        # Distances to the actual knots
-        ti = g[0] - i_inds
-        tj = g[1] - j_inds
-        tk = g[2] - k_inds
+        return (
+            self.coeffs[np.ix_(i, j, k)],
+            basis(ti), basis(tj), basis(tk),
+            basis_deriv1(ti), basis_deriv1(tj), basis_deriv1(tk),
+            basis_deriv2(ti), basis_deriv2(tj), basis_deriv2(tk),
+        )
 
-        # Basis values and derivatives
-        Bi = basis(ti)
-        Bj = basis(tj)
-        Bk = basis(tk)
-
-        dBi = basis_deriv1(ti)
-        dBj = basis_deriv1(tj)
-        dBk = basis_deriv1(tk)
-
-        d2Bi = basis_deriv2(ti)
-        d2Bj = basis_deriv2(tj)
-        d2Bk = basis_deriv2(tk)
-
-        return i_inds, j_inds, k_inds, Bi, Bj, Bk, dBi, dBj, dBk, d2Bi, d2Bj, d2Bk
-
-    def compute_all(self, r):
+    def compute_all(self, r: np.ndarray) -> Tuple[float, np.ndarray, np.ndarray]:
         """
-        Return (value, gradient, Hessian) at world point r in one call.
+        Return (rho, gradient, Hessian) at Cartesian coordinate r.
         """
         g = self.world_to_grid(r)
-        (i_inds, j_inds, k_inds,
-         Bi, Bj, Bk,
-         dBi, dBj, dBk,
-         d2Bi, d2Bj, d2Bk) = self._local_coeffs_and_weights(g)
+        local = self._local_data(g)
+        if local is None:
+            raise ValueError("Requested point lies too close to the CUBE boundary for the spline stencil.")
 
-        val = 0.0
-        grad = np.zeros(3)
-        hess = np.zeros((3, 3))
+        (
+            c,
+            Bx, By, Bz,
+            dBx, dBy, dBz,
+            d2Bx, d2By, d2Bz,
+        ) = local
 
-        # Loop over the (at most) 4x4x4 = 64 contributing knots
-        for ii, bi, dbi, d2bi in zip(i_inds, Bi, dBi, d2Bi):
-            for jj, bj, dbj, d2bj in zip(j_inds, Bj, dBj, d2Bj):
-                for kk, bk, dbk, d2bk in zip(k_inds, Bk, dBk, d2Bk):
-                    c = self.coeffs[ii, jj, kk]
-                    val += c * bi * bj * bk
-                    grad[0] += c * dbi * bj * bk
-                    grad[1] += c * bi * dbj * bk
-                    grad[2] += c * bi * bj * dbk
-                    hess[0, 0] += c * d2bi * bj * bk
-                    hess[1, 1] += c * bi * d2bj * bk
-                    hess[2, 2] += c * bi * bj * d2bk
-                    hess[0, 1] += c * dbi * dbj * bk
-                    hess[0, 2] += c * dbi * bj * dbk
-                    hess[1, 2] += c * bi * dbj * dbk
+        val = np.einsum("ijk,i,j,k->", c, Bx, By, Bz)
+        gx = np.einsum("ijk,i,j,k->", c, dBx, By, Bz)
+        gy = np.einsum("ijk,i,j,k->", c, Bx, dBy, Bz)
+        gz = np.einsum("ijk,i,j,k->", c, Bx, By, dBz)
+        grad_grid = np.array([gx, gy, gz], dtype=float)
 
-        # Symmetrise mixed derivatives
-        hess[1, 0] = hess[0, 1]
-        hess[2, 0] = hess[0, 2]
-        hess[2, 1] = hess[1, 2]
+        hxx = np.einsum("ijk,i,j,k->", c, d2Bx, By, Bz)
+        hyy = np.einsum("ijk,i,j,k->", c, Bx, d2By, Bz)
+        hzz = np.einsum("ijk,i,j,k->", c, Bx, By, d2Bz)
+        hxy = np.einsum("ijk,i,j,k->", c, dBx, dBy, Bz)
+        hxz = np.einsum("ijk,i,j,k->", c, dBx, By, dBz)
+        hyz = np.einsum("ijk,i,j,k->", c, Bx, dBy, dBz)
+        hess_grid = np.array([[hxx, hxy, hxz], [hxy, hyy, hyz], [hxz, hyz, hzz]], dtype=float)
 
-        # Convert derivatives from grid to world coordinates
-        grad = grad * self.inv_spacing
-        hess = hess * np.outer(self.inv_spacing, self.inv_spacing)
+        grad = self.grad_transform @ grad_grid
+        hess = self.grad_transform @ hess_grid @ self.inv_jacobian
+        hess = 0.5 * (hess + hess.T)
 
-        return val, grad, hess
+        return float(val), grad, hess
 
-    def value(self, r):
-        val, _, _ = self.compute_all(r)
-        return val
+    def value(self, r: np.ndarray) -> float:
+        return self.compute_all(r)[0]
 
-    def gradient(self, r):
-        _, grad, _ = self.compute_all(r)
-        return grad
+    def gradient(self, r: np.ndarray) -> np.ndarray:
+        return self.compute_all(r)[1]
 
-    def hessian(self, r):
-        _, _, hess = self.compute_all(r)
-        return hess
+    def hessian(self, r: np.ndarray) -> np.ndarray:
+        return self.compute_all(r)[2]
 
 
 # ============================================================================
-#  Newton search for a critical point (gradient = 0)
+# 5. Critical-point classification
 # ============================================================================
 
-def newton_bcp(interp, r0, tol=1e-6, max_iter=200):
+def classify_hessian(
+    eigs: np.ndarray,
+    eig_tol: float = 1.0e-8,
+) -> Tuple[int, Optional[int], str]:
     """
-    Find a critical point (where gradient vanishes) using Newton's method.
-    Returns the position or None if it fails.
-    """
-    r = r0.copy()
-    for _ in range(max_iter):
-        _, grad, hess = interp.compute_all(r)
-        g_norm = norm(grad)
-        if g_norm < tol:
-            return r
-        try:
-            step = solve(hess, grad)
-        except np.linalg.LinAlgError:
-            return None
-        r = r - 0.5 * step   # full Newton step (damping removed for speed)
-    return None
-
-
-# ============================================================================
-#  AIM analysis at a critical point
-# ============================================================================
-
-def aim_analysis(interp, r):
-    """Compute all AIM quantities at point r."""
-    rho, grad, hess = interp.compute_all(r)
-    eigs = eigvalsh(hess)
-    lap = np.sum(eigs)
-    lambda1, lambda2, lambda3 = eigs
-    ellipticity = (lambda1 / lambda2) - 1.0 if lambda2 != 0 else 0.0
-    return {
-        "position": r.copy(),
-        "rho": rho,
-        "laplacian": lap,
-        "eigenvalues": eigs,
-        "ellipticity": ellipticity,
-        "grad_norm": norm(grad)
-    }
-
-
-# ============================================================================
-#  Parallel search for bond critical points (BCP) between atom pairs
-# ============================================================================
-
-def search_pair(args):
-    """
-    Worker function for parallel execution.
-    Args: (coeffs, origin, spacing, atom1, atom2)
-    """
-    coeffs, origin, spacing, atom1, atom2 = args
-    # Create interpolator locally (avoids pickling issues)
-    interp = BSplineAIM(coeffs, origin, spacing)
-
-    # Initial guess = midpoint of the two atoms
-    r0 = 0.5 * (atom1[1] + atom2[1])
-
-    r_cp = newton_bcp(interp, r0)
-    if r_cp is None:
-        return None
-
-    # Verify it is a (3,-1) critical point (two negative eigenvalues)
-    _, _, hess = interp.compute_all(r_cp)
-    eigs = eigvalsh(hess)
-    if np.sum(eigs < 0) == 2:
-        return aim_analysis(interp, r_cp)
-    return None
-
-
-def find_bcp_parallel(interp, atoms, cutoff=3.0, nproc=4):
-    """
-    Find all bond critical points by scanning atom pairs up to a distance cutoff.
-    Parallelised with multiprocessing.
-    """
-    cutoff /= bohr_to_angstrom
-    # Prepare arguments for each pair
-    pairs = []
-    for a1, a2 in itertools.combinations(atoms, 2):
-        if norm(a1[1] - a2[1]) < cutoff:
-            pairs.append((interp.coeffs, interp.origin, interp.spacing, a1, a2))
-
-    # Run in parallel
-    with ProcessPoolExecutor(max_workers=nproc) as executor:
-        results = list(executor.map(search_pair, pairs))
-
-    # Filter out None
-    cps = [r for r in results if r is not None]
-
-    # Remove duplicates (cluster within 0.1 Å)
-    if cps:
-        coords = np.array([cp["position"] for cp in cps])
-        tree = cKDTree(coords)
-        groups = tree.query_ball_tree(tree, r=0.1)
-        unique = []
-        used = set()
-        for i, group in enumerate(groups):
-            if i in used:
-                continue
-            used.update(group)
-            unique.append(cps[i])
-        return unique
-    return []
-
-
-def find_nci(
-    bcps,
-    atoms=None,
-    rho_min=0.001,
-    rho_max=0.1
-):
-    """
-    Split BCPs into non-covalent and covalent sets
-    according to electron density.
-
-    The 'atoms' argument is retained for API compatibility,
-    but is no longer required.
-    """
-
-    bcps_nci = [
-        bcp
-        for bcp in bcps
-        if rho_min <= bcp["rho"] <= rho_max
-    ]
-
-    bcps_covalent = [
-        bcp
-        for bcp in bcps
-        if bcp["rho"] > rho_max
-    ]
-
-    return bcps_nci, bcps_covalent
-
-
-
-# ============================================================
-# Helpers for NCI graph construction
-# ============================================================
-
-def _covalent_neighbors(G, atom_idx):
-    """
-    Return covalently bonded neighbours of an atom.
-    """
-    return [
-        n for n in G.adj[atom_idx]
-        if G.edges[atom_idx, n].get("bond_type") == "covalent"
-    ]
-
-
-def _angle(a, b, c):
-    """
-    Calculate angle ABC in degrees.
-
-    Parameters
-    ----------
-    a, b, c : array-like
-        Cartesian coordinates.
+    Classify a rank-3 Hessian.
 
     Returns
     -------
-    float or None
-        Angle in degrees.
+    (rank, signature, cp_type)
+
+    cp_type:
+        (3,-3) nuclear maximum
+        (3,-1) BCP/LCP
+        (3,+1) RCP
+        (3,+3) CCP
+        degenerate
     """
-    v1 = np.asarray(a) - np.asarray(b)
-    v2 = np.asarray(c) - np.asarray(b)
+    eigs = np.asarray(eigs, dtype=float)
+    if eigs.size != 3:
+        raise ValueError("Hessian must have three eigenvalues.")
 
-    n1 = norm(v1)
-    n2 = norm(v2)
+    significant = np.abs(eigs) > eig_tol
+    rank = int(np.count_nonzero(significant))
+    if rank != 3:
+        return rank, None, "degenerate"
 
-    if n1 == 0.0 or n2 == 0.0:
-        return None
-
-    cos_angle = np.dot(v1, v2) / (n1 * n2)
-
-    return float(
-        np.degrees(
-            np.arccos(
-                np.clip(cos_angle, -1.0, 1.0)
-            )
-        )
-    )
+    signs = np.sign(eigs)
+    signature = int(np.sum(signs))
+    mapping = {-3: "(3,-3)", -1: "(3,-1)", +1: "(3,+1)", +3: "(3,+3)"}
+    return 3, signature, mapping.get(signature, "unknown")
 
 
-def _aromatic_rings_for_atom(G, atom_idx):
+# ============================================================================
+# 6. Robust Newton solver
+# ============================================================================
+
+def newton_stationary_point(
+    interp: BSplineAIM,
+    r0: np.ndarray,
+    grad_tol: float = 1.0e-6,
+    max_iter: int = 60,
+    damping: bool = True,
+    max_step_bohr: float = 1.5,
+) -> Optional[Dict[str, Any]]:
     """
-    Return aromatic-center nodes directly connected to atom_idx
-    through an aromatic edge.
-    """
-    return [
-        neighbour
-        for neighbour in G.adj[atom_idx]
-        if (
-            G.edges[atom_idx, neighbour].get("bond_type")
-            == "aromatic"
-            and
-            G.nodes[neighbour].get("node_type")
-            == "aromatic_center"
-        )
-    ]
+    Find a stationary point of rho.
 
-
-def _aromatic_membership(G, atom_idx):
-    """
-    Determine whether an atom belongs to an aromatic interaction.
-
-    An atom is considered aromatic if:
-      1. it is directly connected to an aromatic center, or
-      2. it is H covalently bonded to an atom belonging to an
-         aromatic ring.
-
-    Returns
-    -------
-    (bool, list)
-        Whether the atom belongs to an aromatic system and the
-        corresponding aromatic-center nodes.
-    """
-
-    rings = _aromatic_rings_for_atom(G, atom_idx)
-
-    if rings:
-        return True, rings
-
-    # Hydrogen attached to an aromatic atom
-    if G.nodes[atom_idx].get("element") == 1:
-
-        for neighbour in _covalent_neighbors(G, atom_idx):
-
-            neighbour_rings = _aromatic_rings_for_atom(G, neighbour)
-
-            if neighbour_rings:
-                return True, neighbour_rings
-
-    return False, []
-
-
-def _nearest_aromatic_ring(G, atom_idx, position):
-    """
-    Return the nearest aromatic ring associated with atom_idx.
-    """
-    is_aromatic, rings = _aromatic_membership(
-        G,
-        atom_idx
-    )
-
-    if not is_aromatic:
-        return None
-
-    return min(
-        rings,
-        key=lambda ring_node: norm(
-            np.asarray(position)
-            - np.asarray(
-                G.nodes[ring_node]["position"]
-            )
-        )
-    )
-
-
-def _bcp_properties(bcp):
-    """
-    Return common topological properties stored on an NCI edge.
-    """
-    return {
-        "position": np.asarray(
-            bcp["position"]
-        ).copy(),
-
-        "rho": float(
-            bcp["rho"]
-        ),
-
-        "laplacian": float(
-            bcp["laplacian"]
-        ),
-
-        "ellipticity": float(
-            bcp["ellipticity"]
-        ),
-
-        "eigenvalues": np.asarray(
-            bcp["eigenvalues"]
-        ).copy(),
-    }
-
-
-# ============================================================
-# Aromatic interaction classification
-# ============================================================
-
-def _classify_aromatic_nci(
-    atom1_idx,
-    atom2_idx,
-    bcp,
-    atoms,
-    G,
-    angle_threshold=120.0,
-    stacking_dist_threshold=10.5,
-    offset_threshold=3.8,
-):
-    """
-    Determine whether an NCI BCP corresponds to an interaction
-    involving an aromatic pi-system.
+    A damped Newton method with backtracking is used.
 
     Returns
     -------
     dict or None
-
-        If an aromatic interaction is found:
-
-        {
-            "u": graph_node_1,
-            "v": graph_node_2,
-            "attrs": edge_attributes
-        }
-
-        Otherwise None.
+        Contains position, gradient norm, iterations, eigenvalues.
     """
+    r = np.asarray(r0, dtype=float).copy()
+    best_r = None
+    best_norm = float("inf")
 
-    positions = np.asarray([atom[1] for atom in atoms])
+    for iteration in range(max_iter):
+        try:
+            rho, grad, hess = interp.compute_all(r)
+        except (ValueError, np.linalg.LinAlgError):
+            return None
+
+        gnorm = norm(grad)
+        if gnorm < best_norm:
+            best_norm = gnorm
+            best_r = r.copy()
+
+        if not np.isfinite(gnorm) or not np.all(np.isfinite(hess)):
+            return None
+
+        if gnorm <= grad_tol:
+            eigs = eigvalsh(hess)
+            return {
+                "position": r.copy(),
+                "rho": float(rho),
+                "gradient": grad.copy(),
+                "grad_norm": float(gnorm),
+                "hessian": hess.copy(),
+                "eigenvalues": eigs,
+                "iterations": iteration + 1,
+            }
+
+        try:
+            step = solve(hess, grad)
+        except np.linalg.LinAlgError:
+            return None
+
+        step_norm = norm(step)
+        if not np.isfinite(step_norm) or step_norm == 0.0:
+            return None
+
+        if step_norm > max_step_bohr:
+            step *= max_step_bohr / step_norm
+
+        if not damping:
+            r_new = r - step
+        else:
+            current_norm = gnorm
+            alpha = 1.0
+            accepted = False
+            for _ in range(12):
+                candidate = r - alpha * step
+                try:
+                    _, candidate_grad, _ = interp.compute_all(candidate)
+                    candidate_norm = norm(candidate_grad)
+                except (ValueError, np.linalg.LinAlgError):
+                    candidate_norm = float("inf")
+                if np.isfinite(candidate_norm) and candidate_norm < current_norm:
+                    r_new = candidate
+                    accepted = True
+                    break
+                alpha *= 0.5
+            if not accepted:
+                return None
+
+        r = r_new
+
+    # No convergence.
+    return None
+
+
+# ============================================================================
+# 7. Pair geometry
+# ============================================================================
+
+def _angle(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> Optional[float]:
+    """Angle ABC in degrees."""
+    a = np.asarray(a)
+    b = np.asarray(b)
+    c = np.asarray(c)
+    v1 = a - b
+    v2 = c - b
+    n1 = norm(v1)
+    n2 = norm(v2)
+    if n1 <= 0.0 or n2 <= 0.0:
+        return None
+    cosine = np.dot(v1, v2) / (n1 * n2)
+    return float(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
+
+
+def pair_geometry(
+    r: np.ndarray,
+    a: np.ndarray,
+    b: np.ndarray,
+) -> Optional[Dict[str, float]]:
+    """
+    Calculate geometry of point r relative to atom pair A-B.
+
+    Returns
+    -------
+    dict
+        distance_a
+        distance_b
+        atom_distance
+        angle
+        projection
+        line_distance
+        projection_fraction
+    """
+    r = np.asarray(r, dtype=float)
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+
+    ab = b - a
+    d = norm(ab)
+    if d <= 1.0e-12:
+        return None
+
+    u = ab / d
+    ar = r - a
+    projection = np.dot(ar, u)
+    closest = a + projection * u
+    line_distance = norm(r - closest)
+    fraction = projection / d
+    angle = _angle(a, r, b)
+
+    return {
+        "distance_a": norm(r - a),
+        "distance_b": norm(r - b),
+        "atom_distance": d,
+        "angle": angle,
+        "projection": projection,
+        "projection_fraction": fraction,
+        "line_distance": line_distance,
+    }
+
+
+def valid_bcp_pair_geometry(
+    geometry: Dict[str, float],
+    min_angle: float = 140.0,
+    projection_margin: float = 0.20,
+    max_line_fraction: float = 0.35,
+) -> bool:
+    """
+    Decide whether a CP is geometrically associated with A-B.
+
+    This is deliberately permissive enough to allow curved/anisotropic
+    density paths, but rejects obviously unrelated stationary points.
+    """
+    if geometry is None:
+        return False
+    if geometry["angle"] is None:
+        return False
+    if geometry["angle"] < min_angle:
+        return False
+    fraction = geometry["projection_fraction"]
+    if fraction < -projection_margin or fraction > 1.0 + projection_margin:
+        return False
+    if geometry["line_distance"] > max_line_fraction * geometry["atom_distance"]:
+        return False
+    return True
+
+
+# ============================================================================
+# 8. Single seed (midpoint)
+# ============================================================================
+
+def make_midpoint_seed(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Return the midpoint of the segment AB as the only starting point."""
+    return 0.5 * (np.asarray(a) + np.asarray(b))
+
+
+# ============================================================================
+# 9. Worker-side BCP search (single seed)
+# ============================================================================
+
+_WORKER_INTERP: Optional[BSplineAIM] = None
+
+
+def _init_worker(coeffs: np.ndarray, origin: np.ndarray, axes: np.ndarray) -> None:
+    """ProcessPool initializer: transfer density coefficients once per worker."""
+    global _WORKER_INTERP
+    _WORKER_INTERP = BSplineAIM(coeffs, origin, axes)
+
+
+def _search_pair_worker(args: Tuple[int, int, np.ndarray, np.ndarray, Dict]) -> List[Dict]:
+    """
+    Worker function.
+
+    Performs exactly one Newton search starting from the midpoint.
+    Returns a single candidate if a valid (3,-1) CP is found.
+    """
+    atom1_idx, atom2_idx, atom1_position, atom2_position, settings = args
+    interp = _WORKER_INTERP
+    if interp is None:
+        raise RuntimeError("Worker interpolator was not initialized.")
+
+    a = np.asarray(atom1_position, dtype=float)
+    b = np.asarray(atom2_position, dtype=float)
+    seed = make_midpoint_seed(a, b)
+
+    result = newton_stationary_point(
+        interp, seed,
+        grad_tol=settings["grad_tol"],
+        max_iter=settings["max_iter"],
+        damping=True,
+        max_step_bohr=settings["max_step_bohr"],
+    )
+    if result is None:
+        return []
+
+    geometry = pair_geometry(result["position"], a, b)
+    if not valid_bcp_pair_geometry(
+        geometry,
+        min_angle=settings["min_bcp_angle"],
+        projection_margin=settings["projection_margin"],
+        max_line_fraction=settings["max_line_fraction"],
+    ):
+        return []
+
+    eigs = result["eigenvalues"]
+    rank, signature, cp_type = classify_hessian(eigs, eig_tol=settings["eig_tol"])
+    if cp_type != "(3,-1)":
+        return []
+
+    candidate = {
+        "position": result["position"].copy(),
+        "rho": float(result["rho"]),
+        "grad_norm": float(result["grad_norm"]),
+        "eigenvalues": eigs.copy(),
+        "laplacian": float(np.sum(eigs)),
+        "ellipticity": (float(eigs[0] / eigs[1] - 1.0) if abs(eigs[1]) > settings["eig_tol"] else 0.0),
+        "atom1": int(atom1_idx),
+        "atom2": int(atom2_idx),
+        "pair_distance": float(geometry["atom_distance"]),
+        "pair_angle": float(geometry["angle"]),
+        "line_distance": float(geometry["line_distance"]),
+        "projection_fraction": float(geometry["projection_fraction"]),
+        "distance_a": float(geometry["distance_a"]),
+        "distance_b": float(geometry["distance_b"]),
+    }
+    return [candidate]
+
+
+# ============================================================================
+# 10. Global BCP deduplication
+# ============================================================================
+
+def _compute_bcp_score(bcp: Dict) -> float:
+    """
+    Compute a geometry score for a BCP candidate.
+    Lower is better.
+    """
+    distance_penalty = bcp["distance_a"] + bcp["distance_b"]
+    angle = bcp["pair_angle"]
+    if angle is None:
+        return float("inf")
+    angle_penalty = (180.0 - angle) / 40.0
+    line_penalty = bcp["line_distance"] / max(bcp["pair_distance"], 1.0e-8)
+    proj = bcp["projection_fraction"]
+    proj_penalty = 0.0
+    if proj < 0.0:
+        proj_penalty += abs(proj)
+    elif proj > 1.0:
+        proj_penalty += proj - 1.0
+    return distance_penalty + line_penalty + angle_penalty + proj_penalty
+
+
+def deduplicate_bcps(
+    candidates: List[Dict],
+    position_tol_bohr: float = 0.05,
+) -> List[Dict]:
+    """
+    Globally deduplicate BCP candidates by position.
+
+    For each cluster of CPs within position_tol_bohr, keep the one
+    with the smallest geometry score (best pair assignment).
+
+    Returns a list of unique BCPs.
+    """
+    if not candidates:
+        return []
+
+    sorted_candidates = sorted(
+        candidates,
+        key=lambda x: (x["position"][0], x["position"][1], x["position"][2])
+    )
+
+    clusters = []
+    for cand in sorted_candidates:
+        pos = cand["position"]
+        found = False
+        for cluster in clusters:
+            ref_pos = cluster[0]["position"]
+            if norm(pos - ref_pos) <= position_tol_bohr:
+                cluster.append(cand)
+                found = True
+                break
+        if not found:
+            clusters.append([cand])
+
+    unique = []
+    for cluster in clusters:
+        best = min(cluster, key=_compute_bcp_score)
+        unique.append(best)
+
+    return sorted(
+        unique,
+        key=lambda x: (x["atom1"], x["atom2"], x["position"][0], x["position"][1], x["position"][2])
+    )
+
+
+# ============================================================================
+# 11. Candidate atom pairs
+# ============================================================================
+
+def generate_candidate_pairs(
+    atoms: List[Tuple[int, np.ndarray]],
+    bcp_search_radius: float = 5.0,  # Angstrom
+) -> List[Tuple[int, int]]:
+    """
+    Generate all atom pairs within the search radius.
+
+    KDTree avoids O(N^2) distance checking for large systems.
+    """
+    coordinates = np.asarray([atom[1] for atom in atoms], dtype=float)
+    radius_bohr = bcp_search_radius * ANGSTROM_TO_BOHR
+    tree = cKDTree(coordinates)
+    pairs = tree.query_pairs(radius_bohr, output_type="set")
+    return sorted(pairs)
+
+
+# ============================================================================
+# 12. Main BCP search
+# ============================================================================
+
+def find_bcps_parallel(
+    interp: BSplineAIM,
+    atoms: List[Tuple[int, np.ndarray]],
+    bcp_search_radius: float = 5.0,
+    nproc: int = 4,
+    grad_tol: float = 1.0e-6,
+    max_iter: int = 60,
+    eig_tol: float = 1.0e-8,
+    min_bcp_angle: float = 140.0,
+    projection_margin: float = 0.20,
+    max_line_fraction: float = 0.35,
+    max_step_angstrom: float = 0.75,
+    dedup_tol_angstrom: float = 0.03,
+) -> List[Dict]:
+    """
+    Fast single-start BCP search.
+
+    Parameters are expressed in chemically intuitive units where
+    possible; internally all geometry is converted to Bohr.
+    """
+    pairs = generate_candidate_pairs(atoms, bcp_search_radius)
+    if not pairs:
+        return []
+
+    coordinates = np.asarray([atom[1] for atom in atoms], dtype=float)
+
+    settings = {
+        "grad_tol": grad_tol,
+        "max_iter": max_iter,
+        "eig_tol": eig_tol,
+        "min_bcp_angle": min_bcp_angle,
+        "projection_margin": projection_margin,
+        "max_line_fraction": max_line_fraction,
+        "max_step_bohr": max_step_angstrom * ANGSTROM_TO_BOHR,
+    }
+
+    tasks = [
+        (int(i), int(j), coordinates[i], coordinates[j], settings)
+        for i, j in pairs
+    ]
+
+    if nproc <= 1:
+        global _WORKER_INTERP
+        _WORKER_INTERP = interp
+        results = []
+        iterator = (_search_pair_worker(task) for task in tasks)
+        for result in tqdm(iterator, total=len(tasks), desc="Searching BCPs"):
+            results.extend(result)
+    else:
+        with ProcessPoolExecutor(
+            max_workers=nproc,
+            initializer=_init_worker,
+            initargs=(interp.coeffs, interp.origin, interp.axes),
+        ) as executor:
+            results = []
+            iterator = executor.map(
+                _search_pair_worker,
+                tasks,
+                chunksize=max(1, len(tasks) // (nproc * 8)),
+            )
+            for result in tqdm(iterator, total=len(tasks), desc="Searching BCPs"):
+                results.extend(result)
+
+    deduped = deduplicate_bcps(
+        results,
+        position_tol_bohr=dedup_tol_angstrom * ANGSTROM_TO_BOHR,
+    )
+    return deduped
+
+
+# Backward-compatible name.
+find_bcp_parallel = find_bcps_parallel
+
+
+# ============================================================================
+# 13. Covalent / non-covalent separation + filtering
+# ============================================================================
+
+def classify_covalent_like(
+    bcp: Dict,
+    atoms: List[Tuple[int, np.ndarray]],
+    rho_threshold: float = 0.089,
+    covalent_scale: float = 1.25,
+    require_negative_laplacian: bool = False,
+) -> bool:
+    """
+    Decide whether a BCP is likely covalent.
+
+    This is intentionally NOT based on rho alone.
+
+    A BCP is considered covalent-like if:
+
+        rho >= rho_threshold
+
+    AND
+
+        atom distance <=
+        covalent_scale * (r_cov(A) + r_cov(B))
+
+    Optionally the Laplacian can also be required to be negative.
+
+    This is a screening classifier, not a universal QTAIM rule.
+    """
+    i = int(bcp["atom1"])
+    j = int(bcp["atom2"])
+    symbol_i = get_symbol(atoms[i][0])
+    symbol_j = get_symbol(atoms[j][0])
+    distance_angstrom = bcp["pair_distance"] * bohr_to_angstrom
+    cutoff = bond_cutoff_angstrom(symbol_i, symbol_j, scale=covalent_scale)
+
+    if bcp["rho"] < rho_threshold:
+        return False
+    if distance_angstrom > cutoff:
+        return False
+    if require_negative_laplacian and bcp["laplacian"] >= 0.0:
+        return False
+    return True
+
+
+def filter_nci_artifacts(
+    bcps: List[Dict],
+    max_rho: float = 0.15,  # empirical upper limit for NCI
+) -> List[Dict]:
+    """
+    Remove BCPs that are clearly artefacts for NCI.
+
+    Criteria:
+      - Laplacian must be positive (∇²ρ > 0)
+      - rho must not exceed a conservative upper bound
+    """
+    filtered = []
+    for bcp in bcps:
+        if bcp["laplacian"] < 0.0:
+            continue
+        if bcp["rho"] > max_rho:
+            continue
+        filtered.append(bcp)
+    return filtered
+
+
+def find_nci(
+    bcps: List[Dict],
+    atoms: List[Tuple[int, np.ndarray]],
+    rho_threshold: float = 0.089,
+    covalent_scale: float = 1.25,
+    require_negative_laplacian: bool = False,
+    filter_artifacts: bool = True,
+) -> Tuple[List[Dict], List[Dict]]:
+    """
+    Split BCPs into likely covalent and NCI sets.
+
+    NCI set is additionally filtered to remove artefacts
+    (negative Laplacian, excessive rho).
+    """
+    bcps_nci = []
+    bcps_covalent = []
+    for bcp in bcps:
+        if classify_covalent_like(
+            bcp, atoms,
+            rho_threshold=rho_threshold,
+            covalent_scale=covalent_scale,
+            require_negative_laplacian=require_negative_laplacian,
+        ):
+            bcps_covalent.append(bcp)
+        else:
+            bcps_nci.append(bcp)
+
+    if filter_artifacts:
+        bcps_nci = filter_nci_artifacts(bcps_nci)
+
+    return bcps_nci, bcps_covalent
+
+
+# ============================================================================
+# 14. Graph helpers (for nx.Graph)
+# ============================================================================
+
+def _covalent_neighbors(
+    G: nx.Graph,
+    atom_idx: int,
+) -> List[int]:
+    """
+    Return covalently connected atom neighbours.
+
+    Works with nx.Graph (single edge per pair).
+    """
+    result = []
+    for neighbour in G.adj[atom_idx]:
+        data = G.get_edge_data(atom_idx, neighbour)
+        if data and data.get("bond_type") == "covalent":
+            result.append(neighbour)
+    return result
+
+
+def _edge_has_type(
+    G: nx.Graph,
+    u: Union[int, str],
+    v: Union[int, str],
+    types: set,
+) -> bool:
+    """
+    True if an edge u-v exists with bond_type in types.
+    """
+    if not G.has_edge(u, v):
+        return False
+    data = G.get_edge_data(u, v)
+    return data and data.get("bond_type") in set(types)
+
+
+# ============================================================================
+# 15. Aromatic/ring detection
+# ============================================================================
+
+def _fit_ring_plane(
+    coordinates: np.ndarray,
+) -> Optional[Tuple[np.ndarray, np.ndarray, float, float]]:
+    """
+    Fit a least-squares plane.
+
+    Returns
+    -------
+    centre, normal, rms_deviation, max_deviation
+    """
+    coords = np.asarray(coordinates, dtype=float)
+    centre = coords.mean(axis=0)
+    centered = coords - centre
+
+    try:
+        _, _, vh = np.linalg.svd(centered, full_matrices=False)
+    except np.linalg.LinAlgError:
+        return None
+
+    normal = vh[-1]
+    n = norm(normal)
+    if n <= 1.0e-12:
+        return None
+    normal /= n
+
+    distances = centered @ normal
+    rms = float(np.sqrt(np.mean(distances**2)))
+    max_dev = float(np.max(np.abs(distances)))
+    return centre, normal, rms, max_dev
+
+
+def _heuristic_aromatic_cycle(
+    cycle: List[int],
+    G: nx.Graph,
+    atoms: List[Tuple[int, np.ndarray]],
+    planarity_tol: float = 0.10,
+) -> bool:
+    """
+    Conservative heuristic for common aromatic rings.
+
+    This is deliberately not claimed to be a universal aromaticity
+    detector.
+
+    The detector requires:
+      - 5 or 6 membered ring
+      - high planarity
+      - ring atoms limited to C/N/O/S
+      - every ring atom has a plausible sp2-like local environment
+      - approximate 4n+2 pi-electron count
+
+    Complex fused/polycyclic aromatic systems should preferably be
+    supplied explicitly.
+    """
+    if len(cycle) not in {5, 6}:
+        return False
+
+    symbols = [get_symbol(atoms[i][0]) for i in cycle]
+    allowed = {"C", "N", "O", "S"}
+    if not all(s in allowed for s in symbols):
+        return False
+
+    coords = np.asarray([atoms[i][1] for i in cycle])
+    plane = _fit_ring_plane(coords)
+    if plane is None:
+        return False
+
+    _, _, rms, _ = plane
+    if rms > planarity_tol * ANGSTROM_TO_BOHR:
+        return False
+
+    # Approximate pi-electron counting.
+    pi_electrons = 0
+    for atom_idx, symbol in zip(cycle, symbols):
+        if symbol == "C":
+            pi_electrons += 1
+        elif symbol == "N":
+            neighbours = _covalent_neighbors(G, atom_idx)
+            has_h = any(get_symbol(atoms[n][0]) == "H" for n in neighbours)
+            pi_electrons += 2 if has_h else 1
+        elif symbol in {"O", "S"}:
+            pi_electrons += 2
+
+    return pi_electrons >= 2 and (pi_electrons - 2) % 4 == 0
+
+
+def build_covalent_graph(
+    bcps_covalent: List[Dict],
+    atoms: List[Tuple[int, np.ndarray]],
+    max_cycle_size: int = 8,
+    planarity_tol: float = 0.10,
+    aromatic_mode: str = "heuristic",
+) -> nx.Graph:
+    """
+    Build molecular graph from covalent BCPs.
+
+    Only aromatic rings (heuristic) are added as ring nodes.
+    All other planar cycles are ignored for NCI classification.
+
+    aromatic_mode:
+        'heuristic'
+        'none'
+    """
+    coordinates = np.asarray([atom[1] for atom in atoms], dtype=float)
+    G = nx.Graph()
+
+    # Atom nodes
+    for i, (Z, position) in enumerate(atoms):
+        G.add_node(
+            i,
+            node_type="atom",
+            element=int(Z),
+            symbol=get_symbol(Z),
+            position=np.asarray(position).copy(),
+        )
+
+    # Covalent edges
+    for bcp in bcps_covalent:
+        i = int(bcp["atom1"])
+        j = int(bcp["atom2"])
+        if i == j:
+            continue
+        attrs = {
+            "bond_type": "covalent",
+            "position": np.asarray(bcp["position"]).copy(),
+            "rho": float(bcp["rho"]),
+            "laplacian": float(bcp["laplacian"]),
+            "eigenvalues": np.asarray(bcp["eigenvalues"]).copy(),
+            "ellipticity": float(bcp["ellipticity"]),
+            "grad_norm": float(bcp["grad_norm"]),
+        }
+        G.add_edge(i, j, **attrs)
+
+    # Cycles - only aromatic rings are kept as ring nodes
+    simple_graph = nx.Graph()
+    for u, v, data in G.edges(data=True):
+        if data.get("bond_type") == "covalent":
+            simple_graph.add_edge(u, v)
+
+    cycles = nx.cycle_basis(simple_graph)
+    ring_index = 0
+
+    for cycle in cycles:
+        size = len(cycle)
+        if size < 5 or size > max_cycle_size:
+            continue
+
+        coords = coordinates[np.asarray(cycle, dtype=int)]
+        plane = _fit_ring_plane(coords)
+        if plane is None:
+            continue
+
+        centre, normal, rms_planarity, max_planarity = plane
+        rms_angstrom = rms_planarity * bohr_to_angstrom
+        if rms_angstrom > planarity_tol:
+            continue
+
+        radius = float(np.mean(np.linalg.norm(coords - centre, axis=1)))
+
+        aromatic = False
+        if aromatic_mode == "heuristic":
+            aromatic = _heuristic_aromatic_cycle(
+                cycle, G, atoms, planarity_tol=planarity_tol
+            )
+        elif aromatic_mode == "none":
+            aromatic = False
+        else:
+            raise ValueError("aromatic_mode must be 'heuristic' or 'none'.")
+
+        if aromatic:
+            ring_node = f"ring_{ring_index}"
+            ring_index += 1
+            cycle_tuple = tuple(sorted(int(i) for i in cycle))
+            plane_d = float(-np.dot(normal, centre))
+
+            G.add_node(
+                ring_node,
+                node_type="aromatic_center",
+                position=centre.copy(),
+                normal=normal.copy(),
+                plane_d=plane_d,
+                radius=radius,
+                cycle=cycle_tuple,
+                size=size,
+                aromatic=True,
+                rms_planarity=rms_planarity,
+                max_planarity_deviation=max_planarity,
+            )
+
+            for atom_idx in cycle:
+                G.add_edge(ring_node, int(atom_idx), bond_type="aromatic", ring=cycle_tuple)
+
+    return G
+
+
+# ============================================================================
+# 16. Aromatic helpers
+# ============================================================================
+
+def _aromatic_rings_for_atom(
+    G: nx.Graph,
+    atom_idx: int,
+) -> List[str]:
+    """
+    Return aromatic ring nodes associated with atom_idx.
+
+    Simplified: any neighbour starting with "ring_" is considered
+    an aromatic ring (only such nodes are created in build_covalent_graph).
+    """
+    result = []
+    for neighbour in G.adj[atom_idx]:
+        if isinstance(neighbour, str) and neighbour.startswith("ring_"):
+            result.append(neighbour)
+    return result
+
+
+def _aromatic_membership(
+    G: nx.Graph,
+    atom_idx: int,
+) -> Tuple[bool, List[str]]:
+    """
+    Determine whether atom belongs to an aromatic system.
+    """
+    rings = _aromatic_rings_for_atom(G, atom_idx)
+    if rings:
+        return True, rings
+
+    # H attached to aromatic atom.
+    if G.nodes[atom_idx].get("element") == 1:
+        for neighbour in _covalent_neighbors(G, atom_idx):
+            rings = _aromatic_rings_for_atom(G, neighbour)
+            if rings:
+                return True, rings
+    return False, []
+
+
+def _nearest_aromatic_ring(
+    G: nx.Graph,
+    atom_idx: int,
+    position: np.ndarray,
+) -> Optional[str]:
+    """
+    Find the nearest aromatic ring node for a given atom.
+    """
+    aromatic, rings = _aromatic_membership(G, atom_idx)
+    if not aromatic:
+        return None
+    return min(
+        rings,
+        key=lambda ring: norm(np.asarray(position) - np.asarray(G.nodes[ring]["position"]))
+    )
+
+
+# ============================================================================
+# 17. BCP property helper
+# ============================================================================
+
+def _bcp_properties(bcp: Dict) -> Dict:
+    """Extract common BCP properties into a dict."""
+    return {
+        "position": np.asarray(bcp["position"]).copy(),
+        "rho": float(bcp["rho"]),
+        "laplacian": float(bcp["laplacian"]),
+        "ellipticity": float(bcp["ellipticity"]),
+        "eigenvalues": np.asarray(bcp["eigenvalues"]).copy(),
+        "grad_norm": float(bcp["grad_norm"]),
+    }
+
+
+# ============================================================================
+# 18. Aromatic interaction classifier
+# ============================================================================
+
+def _classify_aromatic_nci(
+    atom1_idx: int,
+    atom2_idx: int,
+    bcp: Dict,
+    atoms: List[Tuple[int, np.ndarray]],
+    G: nx.Graph,
+    angle_threshold: float = 120.0,
+    stacking_dist_threshold: float = 5.5,
+    offset_threshold: float = 2.0,
+) -> Optional[Dict]:
+    """
+    Classify aromatic pi interactions.
+
+    Returns None if no robust aromatic interpretation is found.
+    """
+    coordinates = np.asarray([atom[1] for atom in atoms], dtype=float)
     symbols = [get_symbol(atom[0]) for atom in atoms]
 
-    p1 = positions[atom1_idx]
-    p2 = positions[atom2_idx]
+    p1 = coordinates[atom1_idx]
+    p2 = coordinates[atom2_idx]
 
     aromatic1, rings1 = _aromatic_membership(G, atom1_idx)
     aromatic2, rings2 = _aromatic_membership(G, atom2_idx)
 
-    # --------------------------------------------------------
-    # No aromatic system involved
-    # --------------------------------------------------------
-
     if not aromatic1 and not aromatic2:
         return None
 
-    # ========================================================
-    # BOTH atoms belong to aromatic systems
-    # ========================================================
-
+    # Both atoms associated with aromatic systems
     if aromatic1 and aromatic2:
         ring1 = _nearest_aromatic_ring(G, atom1_idx, p1)
         ring2 = _nearest_aromatic_ring(G, atom2_idx, p2)
-
-        if ring1 is None or ring2 is None:
-            return None
-
-        # Both atoms belong to the same aromatic ring.
-        # This is not an intermolecular pi interaction.
-        if ring1 == ring2:
+        if ring1 is None or ring2 is None or ring1 == ring2:
             return None
 
         c1 = np.asarray(G.nodes[ring1]["position"])
         c2 = np.asarray(G.nodes[ring2]["position"])
-        diff = c2 - c1
-
         n1 = np.asarray(G.nodes[ring1]["normal"])
         n2 = np.asarray(G.nodes[ring2]["normal"])
 
-        centroid_distance = np.linalg.norm(diff)
-
+        diff = c2 - c1
+        centroid_distance = norm(diff) * bohr_to_angstrom
         if centroid_distance > stacking_dist_threshold:
             return None
 
-        # Angle between the normals of the two aromatic planes
-        ring_angle = np.degrees(
-            np.arccos(
-                np.clip(
-                    abs(np.dot(n1, n2)),
-                    0.0,
-                    1.0
-                )
-            )
-        )
+        ring_angle = np.degrees(np.arccos(np.clip(abs(np.dot(n1, n2)), 0.0, 1.0)))
 
-        # ----------------------------------------------------
-        # Parallel pi-pi stacking
-        # ----------------------------------------------------
+        # Parallel stacking
         if ring_angle <= 30.0:
-
-            offset = np.linalg.norm(diff - np.dot(diff, n1) * n1)
-
+            offset = norm(diff - np.dot(diff, n1) * n1) * bohr_to_angstrom
             if offset > offset_threshold:
                 return None
-
             attrs = {
                 "bond_type": "stacking",
                 "ring_1": ring1,
                 "ring_2": ring2,
-                "atom_num_cycle_1": int(np.min(G.nodes[ring1]["cycle"])),
-                "atom_num_cycle_2": int(np.min(G.nodes[ring2]["cycle"])),
+                "atom_num_cycle_1": int(min(G.nodes[ring1]["cycle"])),
+                "atom_num_cycle_2": int(min(G.nodes[ring2]["cycle"])),
                 "centroid_distance": float(centroid_distance),
                 "offset": float(offset),
                 "angle": float(ring_angle),
             }
-
             attrs.update(_bcp_properties(bcp))
+            return {"u": ring1, "v": ring2, "attrs": attrs}
 
-            return {
-                "u": ring1,
-                "v": ring2,
-                "attrs": attrs
-            }
-
-        # ----------------------------------------------------
-        # T-stacking
-        # ----------------------------------------------------
-
-        elif ring_angle >= 80.0:
-
+        # T stacking
+        if ring_angle >= 80.0:
             attrs = {
                 "bond_type": "T-stacking",
                 "ring_1": ring1,
                 "ring_2": ring2,
-                "atom_num_cycle_1": int(np.min(G.nodes[ring1]["cycle"])),
-                "atom_num_cycle_2": int(np.min(G.nodes[ring2]["cycle"])),
+                "atom_num_cycle_1": int(min(G.nodes[ring1]["cycle"])),
+                "atom_num_cycle_2": int(min(G.nodes[ring2]["cycle"])),
                 "centroid_distance": float(centroid_distance),
                 "angle": float(ring_angle),
             }
-
             attrs.update(_bcp_properties(bcp))
-
-            return {
-                "u": ring1,
-                "v": ring2,
-                "attrs": attrs
-            }
+            return {"u": ring1, "v": ring2, "attrs": attrs}
 
         return None
 
-    # ========================================================
-    # ONLY ONE atom belongs to an aromatic system
-    # ========================================================
-
+    # Only one atom is aromatic
     if aromatic1:
-        aromatic_idx = atom1_idx
-        other_idx = atom2_idx
+        aromatic_idx, other_idx = atom1_idx, atom2_idx
         rings = rings1
-
     else:
-        aromatic_idx = atom2_idx
-        other_idx = atom1_idx
+        aromatic_idx, other_idx = atom2_idx, atom1_idx
         rings = rings2
 
-    aromatic_position = positions[aromatic_idx]
-
-    # If an atom belongs to several rings, select the closest one.
     ring = min(
         rings,
-        key=lambda ring_node: norm(
-            aromatic_position
-            - G.nodes[ring_node]["position"]
-        )
+        key=lambda r: norm(coordinates[aromatic_idx] - G.nodes[r]["position"])
     )
-
     centre = np.asarray(G.nodes[ring]["position"])
     normal = np.asarray(G.nodes[ring]["normal"])
     radius = float(G.nodes[ring]["radius"])
 
     other_symbol = symbols[other_idx]
 
-    # ========================================================
     # X-H ... pi
-    # ========================================================
-
     if other_symbol == "H":
-
         h_idx = other_idx
-
-        h_neighbours = _covalent_neighbors(
-            G,
-            h_idx
-        )
-
-        if len(h_neighbours) != 1:
+        neighbours = _covalent_neighbors(G, h_idx)
+        if len(neighbours) != 1:
             return None
-
-        x_idx = h_neighbours[0]
+        x_idx = neighbours[0]
         x_symbol = symbols[x_idx]
-
-        if x_symbol not in (
-            "C",
-            "N",
-            "O",
-            "S"
-        ):
+        if x_symbol not in {"C", "N", "O", "S"}:
             return None
 
-        H = positions[h_idx]
-        X = positions[x_idx]
-
-        cutoff = (6.62 if x_symbol in ("C", "S") else 5.7)
-
-        h_centroid_distance = norm(H - centre)
-
-        if h_centroid_distance > cutoff:
+        H = coordinates[h_idx]
+        X = coordinates[x_idx]
+        H_centroid_distance = norm(H - centre) * bohr_to_angstrom
+        if H_centroid_distance > 3.5:
             return None
 
-        # X-H-pi angle
         angle = _angle(X, H, centre)
-
-        if angle is None:
+        if angle is None or angle < angle_threshold:
             return None
 
-        if angle < angle_threshold:
-            return None
-
-        # Projection of H onto the aromatic plane
-        vec = H - centre
-
-        projection = (vec - np.dot(vec, normal) * normal)
-        projection_distance = norm(projection)
-
-        if projection_distance > radius + 0.2:
+        projection = H - centre
+        projection = projection - np.dot(projection, normal) * normal
+        projection_distance = norm(projection) * bohr_to_angstrom
+        radius_angstrom = radius * bohr_to_angstrom
+        if projection_distance > radius_angstrom + 0.25:
             return None
 
         attrs = {
@@ -754,677 +1446,129 @@ def _classify_aromatic_nci(
             "h_num": int(h_idx),
             "symbol_x": x_symbol,
             "ring": ring,
-            "atom_num_cycle": int(np.min(G.nodes[ring]["cycle"])),
-            "h_centroid_distance": float(h_centroid_distance),
+            "atom_num_cycle": int(min(G.nodes[ring]["cycle"])),
+            "h_centroid_distance": float(H_centroid_distance),
             "projection_distance": float(projection_distance),
             "angle": float(angle),
         }
-
         attrs.update(_bcp_properties(bcp))
+        return {"u": h_idx, "v": ring, "attrs": attrs}
 
-        return {
-            "u": h_idx,
-            "v": ring,
-            "attrs": attrs
-        }
-
-    # ========================================================
     # Lone pair ... pi
-    # ========================================================
-
-    lp_atoms = {
-        "O",
-        "N",
-        "S",
-        "Se"
-    }
-
-    if other_symbol not in lp_atoms:
+    if other_symbol not in {"N", "O", "S", "Se"}:
         return None
 
     lp_idx = other_idx
-    donor = positions[lp_idx]
-
-    neighbours = _covalent_neighbors(
-        G,
-        lp_idx
-    )
-
-    if len(neighbours) == 0:
+    neighbours = _covalent_neighbors(G, lp_idx)
+    if not neighbours:
         return None
 
-    # Simple lone-pair filter
-    if other_symbol == "O" and len(neighbours) > 2:
+    donor = coordinates[lp_idx]
+    distance = norm(donor - centre) * bohr_to_angstrom
+    if not (1.5 <= distance <= 3.6):
         return None
-
-    if other_symbol == "N" and len(neighbours) > 3:
-        return None
-
-    if other_symbol in ("S", "Se") and len(neighbours) > 4:
-        return None
-
-    # Distance from lone-pair atom to ring centre
-    lp_centroid_distance = norm(donor - centre)
-
-    if other_symbol in ("S", "Se"):
-
-        if not (4.7 <= lp_centroid_distance <= 7.6):
-            return None
-
-    else:
-
-        if not (4.7 <= lp_centroid_distance <= 6.8):
-            return None
-
-    # --------------------------------------------------------
-    # Angle between donor-ring-centre vector and ring normal
-    # --------------------------------------------------------
 
     vec = donor - centre
-    vec_norm = np.linalg.norm(vec)
-
-    if vec_norm == 0.0:
+    vec_norm = norm(vec)
+    if vec_norm <= 1.0e-12:
         return None
 
-    angle_to_normal = np.degrees(
-        np.arccos(
-            np.clip(
-                abs(np.dot(vec, normal)) / vec_norm,
-                0.0,
-                1.0
-            )
-        )
-    )
+    angle_to_normal = np.degrees(np.arccos(np.clip(abs(np.dot(vec, normal)) / vec_norm, 0.0, 1.0)))
+    if angle_to_normal > 45.0:
+        return None
 
-    # --------------------------------------------------------
-    # centre-ring / lone-pair atom / covalent neighbour angle
-    #
-    # IMPORTANT:
-    #
-    # angle = angle(CENTRE - LP - NEIGHBOUR)
-    #
-    # No abs() and no vector inversion are used here.
-    # Therefore the angle is genuinely in [0, 180] degrees.
-    # --------------------------------------------------------
-
-    best_angle = None
-    best_neighbour = None
-
+    best = None
     for neighbour_idx in neighbours:
-
-        neighbour = positions[neighbour_idx]
-        angle = 180 - _angle(centre, donor, neighbour)
-
+        angle = _angle(centre, donor, coordinates[neighbour_idx])
         if angle is None:
             continue
+        lp_angle = 180.0 - angle
+        if 100.0 <= lp_angle <= 130.0:
+            candidate = (abs(lp_angle - 115.0), lp_angle, neighbour_idx)
+            if best is None or candidate < best:
+                best = candidate
 
-        if (100.0 <= angle <= 130.0) & (0.0 <= angle_to_normal <= 45.0):
-
-            best_angle = angle
-            best_neighbour = neighbour_idx
-            continue
-
-    if best_angle is None:
+    if best is None:
         return None
 
+    _, best_angle, best_neighbour = best
     attrs = {
         "bond_type": "n-pi",
         "lp_num": int(lp_idx),
         "symbol_lp": other_symbol,
         "ring": ring,
-        "atom_num_cycle": int(
-            np.min(
-                G.nodes[ring]["cycle"]
-            )
-        ),
-
-        "lp_centroid_distance": float(
-            lp_centroid_distance
-        ),
-
-        "angle_to_normal": float(
-            angle_to_normal
-        ),
-
+        "atom_num_cycle": int(min(G.nodes[ring]["cycle"])),
+        "lp_centroid_distance": float(distance),
+        "angle_to_normal": float(angle_to_normal),
         "angle": float(best_angle),
-        "lp_neighbour_num": int(
-            best_neighbour
-        ),
+        "lp_neighbour_num": int(best_neighbour),
     }
+    attrs.update(_bcp_properties(bcp))
+    return {"u": lp_idx, "v": ring, "attrs": attrs}
 
-    attrs.update(
-        _bcp_properties(bcp)
-    )
 
-    return {
-        "u": lp_idx,
-        "v": ring,
-        "attrs": attrs
-    }
+# ============================================================================
+# 19. Ordinary NCI classifier
+# ============================================================================
 
-
-# ============================================================
-# Main NCI graph construction
-# ============================================================
-def build_covalent_graph(
-    bcps_covalent,
-    atoms,
-    max_cycle_size: int = 8,
-    planarity_tol: float = 0.10
-) -> nx.Graph:
-    """
-    Build a molecular NetworkX graph containing atoms, covalent
-    bonds and aromatic ring centres.
-
-    The function is self-contained: if a covalent BCP does not
-    already contain 'atom1' and 'atom2', the two nearest atoms
-    to the BCP are determined automatically.
-
-    Parameters
-    ----------
-    bcps_covalent : list of dict
-        Covalent bond critical points. Each BCP must contain at least
-        'position', 'rho', 'laplacian', 'eigenvalues' and 'ellipticity'.
-
-        If 'atom1' and 'atom2' are already present, they are used.
-        Otherwise they are determined from the two nearest atoms.
-
-    atoms : list of tuples
-        Molecular atoms in the format:
-
-            [(Z, position), ...]
-
-        where Z is the atomic number and position is a Cartesian
-        coordinate array.
-
-    max_cycle_size : int, default=8
-        Maximum ring size considered when searching for cycles.
-
-    planarity_tol : float, default=0.10
-        Maximum RMS deviation from the fitted ring plane.
-
-    Returns
-    -------
-    nx.Graph
-        Graph containing:
-
-        - atom nodes with node_type='atom'
-        - covalent edges with bond_type='covalent'
-        - aromatic-center nodes with node_type='aromatic_center'
-        - aromatic edges with bond_type='aromatic'
-    """
-
-    # =========================================================
-    # Atomic coordinates
-    # =========================================================
-
-    coordinates = np.asarray([
-        atom[1]
-        for atom in atoms
-    ])
-
-    # KD-tree is used only if BCPs do not already contain
-    # atom1 / atom2.
-    atom_tree = cKDTree(coordinates)
-
-    # =========================================================
-    # Create graph
-    # =========================================================
-
-    G = nx.Graph()
-
-    # Add all atom nodes explicitly.
-    for i, (Z, position) in enumerate(atoms):
-
-        G.add_node(
-            i,
-            node_type="atom",
-            element=int(Z),
-            position=np.asarray(position).copy()
-        )
-
-    # =========================================================
-    # Add covalent bonds
-    # =========================================================
-
-    for bcp in bcps_covalent:
-
-        # -----------------------------------------------------
-        # Determine the two atoms belonging to the BCP
-        # -----------------------------------------------------
-
-        if (
-            "atom1" in bcp
-            and
-            "atom2" in bcp
-        ):
-
-            atom1 = int(bcp["atom1"])
-            atom2 = int(bcp["atom2"])
-
-        else:
-
-            position = np.asarray(
-                bcp["position"]
-            )
-
-            distances, indices = atom_tree.query(
-                position,
-                k=2
-            )
-
-            atom1 = int(indices[0])
-            atom2 = int(indices[1])
-
-        # -----------------------------------------------------
-        # Safety checks
-        # -----------------------------------------------------
-
-        if atom1 == atom2:
-            continue
-
-        if not (
-            0 <= atom1 < len(atoms)
-            and
-            0 <= atom2 < len(atoms)
-        ):
-            continue
-
-        # -----------------------------------------------------
-        # Add covalent edge
-        # -----------------------------------------------------
-
-        G.add_edge(
-            atom1,
-            atom2,
-
-            bond_type="covalent",
-
-            position=np.asarray(
-                bcp["position"]
-            ).copy(),
-
-            rho=float(
-                bcp["rho"]
-            ),
-
-            laplacian=float(
-                bcp["laplacian"]
-            ),
-
-            eigenvalues=np.asarray(
-                bcp["eigenvalues"]
-            ).copy(),
-
-            ellipticity=float(
-                bcp["ellipticity"]
-            )
-        )
-
-    # =========================================================
-    # Find cycles
-    # =========================================================
-
-    cycles = nx.cycle_basis(G)
-
-    aromatic_index = 0
-
-    for cycle in cycles:
-
-        ring_size = len(cycle)
-
-        # -----------------------------------------------------
-        # Ring-size filter
-        # -----------------------------------------------------
-
-        if (
-            ring_size < 5
-            or
-            ring_size > max_cycle_size
-        ):
-            continue
-
-        # -----------------------------------------------------
-        # Ring coordinates
-        # -----------------------------------------------------
-
-        coords = coordinates[
-            np.asarray(
-                cycle,
-                dtype=int
-            )
-        ]
-
-        centre = coords.mean(
-            axis=0
-        )
-
-        # -----------------------------------------------------
-        # Least-squares plane through ring atoms
-        # -----------------------------------------------------
-
-        centered = coords - centre
-
-        try:
-
-            _, _, vh = np.linalg.svd(
-                centered,
-                full_matrices=False
-            )
-
-        except np.linalg.LinAlgError:
-
-            continue
-
-        # Normal to the best-fit plane
-        normal = vh[-1]
-
-        normal_norm = norm(
-            normal
-        )
-
-        if normal_norm == 0.0:
-            continue
-
-        normal = normal / normal_norm
-
-        # -----------------------------------------------------
-        # Deviation of atoms from the plane
-        # -----------------------------------------------------
-
-        distances = centered @ normal
-
-        rms_planarity = np.sqrt(
-            np.mean(
-                distances ** 2
-            )
-        )
-
-        max_planarity_deviation = np.max(
-            np.abs(distances)
-        )
-
-        # -----------------------------------------------------
-        # Planarity filter
-        # -----------------------------------------------------
-
-        if rms_planarity > planarity_tol:
-            continue
-
-        # -----------------------------------------------------
-        # Ring radius
-        # -----------------------------------------------------
-
-        radius = np.mean(
-            np.linalg.norm(
-                coords - centre,
-                axis=1
-            )
-        )
-
-        # -----------------------------------------------------
-        # Plane equation:
-        #
-        # n · r + d = 0
-        # -----------------------------------------------------
-
-        plane_d = -np.dot(
-            normal,
-            centre
-        )
-
-        # -----------------------------------------------------
-        # Store cycle in deterministic form
-        # -----------------------------------------------------
-
-        cycle_tuple = tuple(
-            sorted(
-                int(i)
-                for i in cycle
-            )
-        )
-
-        ring_node = (
-            f"ring_{aromatic_index}"
-        )
-
-        aromatic_index += 1
-
-        # =====================================================
-        # Add aromatic-center node
-        # =====================================================
-
-        G.add_node(
-            ring_node,
-
-            node_type="aromatic_center",
-
-            position=np.asarray(
-                centre
-            ).copy(),
-
-            normal=np.asarray(
-                normal
-            ).copy(),
-
-            plane_d=float(
-                plane_d
-            ),
-
-            radius=float(
-                radius
-            ),
-
-            cycle=cycle_tuple,
-
-            size=int(
-                ring_size
-            ),
-
-            aromatic=True,
-
-            rms_planarity=float(
-                rms_planarity
-            ),
-
-            max_planarity_deviation=float(
-                max_planarity_deviation
-            )
-        )
-
-        # =====================================================
-        # Connect ring centre to every ring atom
-        # =====================================================
-
-        for atom_idx in cycle:
-
-            G.add_edge(
-                ring_node,
-                int(atom_idx),
-
-                bond_type="aromatic",
-
-                ring=cycle_tuple
-            )
-
-    return G
+def _nearest_pair_from_bcp(bcp: Dict, atoms: List) -> Tuple[int, int]:
+    """Use the atom pair already determined during BCP search."""
+    return int(bcp["atom1"]), int(bcp["atom2"])
 
 
 def build_graph_with_nci(
-    bcps,
-    G,
-    atoms,
-    angle_threshold=120.0,
-    stacking_dist_threshold=10.4,
-    offset_threshold=3.8,
-    bcp_angle_threshold=150.0,
-    search_radius = 3.8,
-):
+    bcps: List[Dict],
+    G: nx.Graph,
+    atoms: List[Tuple[int, np.ndarray]],
+    angle_threshold: float = 120.0,
+    stacking_dist_threshold: float = 5.5,
+    offset_threshold: float = 2.0,
+) -> nx.Graph:
     """
-    Add non-covalent interactions to an existing molecular graph.
+    Add classified NCI interactions.
 
-    Each BCP is assigned to the two closest atoms. The BCP is then
-    classified as:
-
-        HB       hydrogen bond
-        XB       halogen bond
-        ChB      chalcogen bond
-        PnB      pnictogen bond
-        H-pi     X-H ... pi interaction
-        n-pi     lone-pair ... pi interaction
-        stacking parallel pi-pi stacking
-        T-stacking perpendicular / T-shaped pi interaction
-
-    Aromatic interactions are checked before ordinary HB/XB/ChB/PnB
-    classification.
-
-    Parameters
-    ----------
-    bcps : list of dict
-        NCI bond critical points.
-
-    G : nx.Graph
-        Existing molecular graph containing atom nodes, covalent
-        bonds and aromatic-center nodes.
-
-    atoms : list of (Z, position)
-        Atomic numbers and Cartesian coordinates.
-
-    angle_threshold : float
-        Minimum X-H-pi angle.
-
-    stacking_dist_threshold : float
-        Maximum distance between aromatic ring centroids.
-
-    offset_threshold : float
-        Maximum lateral offset for parallel pi-pi stacking.
-
-    Returns
-    -------
-    nx.Graph
-        Updated molecular graph.
+    The atom pair comes directly from the BCP search.
     """
-
     if not bcps:
         return G
 
-    # --------------------------------------------------------
-    # Atomic coordinates
-    # --------------------------------------------------------
-
-    coordinates = np.asarray([atom[1] for atom in atoms])
+    coordinates = np.asarray([atom[1] for atom in atoms], dtype=float)
     symbols = [get_symbol(atom[0]) for atom in atoms]
 
-    # Build once; do not construct a KD-tree for every BCP.
-    atom_tree = cKDTree(coordinates)
-
-    # ========================================================
-    # Process BCPs
-    # ========================================================
-
-    for bcp in tqdm(bcps, desc="Building graph from NCI BCPs"):
-
-        position = np.asarray(bcp["position"])
-
-        # ----------------------------------------------------
-        # Find all atoms within search_radius from the BCP
-        # ----------------------------------------------------
-
-        indices_in_radius = atom_tree.query_ball_point(position, search_radius)
-
-        if len(indices_in_radius) < 2:
-            continue
-
-        # ----------------------------------------------------
-        # Find the best pair: angle >= threshold and minimal sum of distances
-        # ----------------------------------------------------
-
-        best_pair = None
-        best_sum_dist = float('inf')
-
-        for i in range(len(indices_in_radius)):
-            idx1 = indices_in_radius[i]
-            for idx2 in indices_in_radius[i+1:]:
-                if idx1 == idx2:
-                    continue
-
-                angle = _angle(coordinates[idx1], position, coordinates[idx2])
-                if angle is None or angle < bcp_angle_threshold:
-                    continue
-
-                d1 = norm(coordinates[idx1] - position)
-                d2 = norm(coordinates[idx2] - position)
-                sum_dist = d1 + d2
-
-                if sum_dist < best_sum_dist:
-                    best_sum_dist = sum_dist
-                    best_pair = (idx1, idx2)
-
-        if best_pair is None:
-            continue
-
-        atom1_idx, atom2_idx = best_pair
-
-        if G.has_edge(atom1_idx, atom2_idx):
+    for bcp in tqdm(bcps, desc="Classifying NCI BCPs"):
+        atom1_idx, atom2_idx = _nearest_pair_from_bcp(bcp, atoms)
+        if atom1_idx == atom2_idx:
             continue
 
         symbol1 = symbols[atom1_idx]
         symbol2 = symbols[atom2_idx]
 
-        # ====================================================
-        # 1. Aromatic interactions
-       # ====================================================
-
+        # Aromatic interactions first
         aromatic_result = _classify_aromatic_nci(
-            atom1_idx=atom1_idx,
-            atom2_idx=atom2_idx,
-            bcp=bcp,
-            atoms=atoms,
-            G=G,
+            atom1_idx, atom2_idx, bcp, atoms, G,
             angle_threshold=angle_threshold,
             stacking_dist_threshold=stacking_dist_threshold,
             offset_threshold=offset_threshold,
         )
-
         if aromatic_result is not None:
-
-            G.add_edge(
-                aromatic_result["u"],
-                aromatic_result["v"],
-                **aromatic_result["attrs"]
-            )
-
+            G.add_edge(aromatic_result["u"], aromatic_result["v"], **aromatic_result["attrs"])
             continue
 
-        # ====================================================
-        # 2. Hydrogen bonds
-        # ====================================================
-
+        # Hydrogen bonds
         is_h1 = symbol1 == "H"
         is_h2 = symbol2 == "H"
-
-        # H ... H is ignored
         if is_h1 and is_h2:
             continue
 
         if is_h1 or is_h2:
-
             if is_h1:
-                h_idx = atom1_idx
-                acceptor_idx = atom2_idx
+                h_idx, acceptor_idx = atom1_idx, atom2_idx
             else:
-                h_idx = atom2_idx
-                acceptor_idx = atom1_idx
-
-            # ------------------------------------------------
-            # Find covalent donor of H
-            # ------------------------------------------------
+                h_idx, acceptor_idx = atom2_idx, atom1_idx
 
             donor_neighbours = _covalent_neighbors(G, h_idx)
-
             if len(donor_neighbours) != 1:
                 continue
-
             donor_idx = donor_neighbours[0]
             donor_symbol = symbols[donor_idx]
             acceptor_symbol = symbols[acceptor_idx]
@@ -1433,20 +1577,10 @@ def build_graph_with_nci(
             H = coordinates[h_idx]
             A = coordinates[acceptor_idx]
 
-            # H ... D distance
-            h_donor_distance = norm(H - D)
-
-            # H ... A distance
-            h_acceptor_distance = norm(H - A)
-
-            # D ... A distance
-            heavy_atom_distance = norm(D - A)
-
-            # D-H ... A angle
+            D_H = norm(H - D) * bohr_to_angstrom
+            H_A = norm(H - A) * bohr_to_angstrom
+            D_A = norm(D - A) * bohr_to_angstrom
             hb_angle = _angle(D, H, A)
-
-            if hb_angle is None:
-                continue
 
             attrs = {
                 "bond_type": "HB",
@@ -1454,1344 +1588,452 @@ def build_graph_with_nci(
                 "hydrogen_num": int(h_idx),
                 "acceptor_num": int(acceptor_idx),
                 "donor_symbol": donor_symbol,
-                "acceptor_symbol":acceptor_symbol,
-                "distance": float(h_acceptor_distance),
-                "heavy_atom_distance": float(heavy_atom_distance),
+                "acceptor_symbol": acceptor_symbol,
+                "distance": float(H_A),
+                "heavy_atom_distance": float(D_A),
                 "angle": float(hb_angle),
-                "h_donor_distance": float(h_donor_distance)
+                "h_donor_distance": float(D_H),
             }
-
             attrs.update(_bcp_properties(bcp))
-
             G.add_edge(h_idx, acceptor_idx, **attrs)
-
             continue
 
-        # ====================================================
-        # 3. Heavy-atom interactions:
-        # XB / ChB / PnB
-        # ====================================================
+        # Heavy atom sigma-hole interactions
+        distance = norm(coordinates[atom1_idx] - coordinates[atom2_idx]) * bohr_to_angstrom
+        r1 = BONDI.get(symbol1, None)
+        r2 = BONDI.get(symbol2, None)
+        if r1 is None or r2 is None:
+            continue
 
-        distance1 = norm(coordinates[atom1_idx] - position) / BONDI[symbols[atom1_idx]]
-        distance2 = norm(coordinates[atom2_idx] - position) / BONDI[symbols[atom2_idx]]
+        d1 = norm(coordinates[atom1_idx] - np.asarray(bcp["position"])) * bohr_to_angstrom
+        d2 = norm(coordinates[atom2_idx] - np.asarray(bcp["position"])) * bohr_to_angstrom
+        norm1 = d1 / r1
+        norm2 = d2 / r2
 
-        # Atom closest to BCP = electrophilic atom
-        if distance1 <= distance2:
-
-            electrophile_idx = atom1_idx
-            nucleophile_idx = atom2_idx
-
+        if norm1 <= norm2:
+            electrophile_idx, nucleophile_idx = atom1_idx, atom2_idx
         else:
-
-            electrophile_idx = atom2_idx
-            nucleophile_idx = atom1_idx
+            electrophile_idx, nucleophile_idx = atom2_idx, atom1_idx
 
         electrophile_symbol = symbols[electrophile_idx]
-
-        # ----------------------------------------------------
-        # Determine interaction type
-        # ----------------------------------------------------
-
         if electrophile_symbol in {"F", "Cl", "Br", "I"}:
             bond_type = "XB"
-
         elif electrophile_symbol in {"O", "S", "Se", "Te"}:
             bond_type = "ChB"
-
         elif electrophile_symbol in {"N", "P", "As", "Sb", "Bi"}:
             bond_type = "PnB"
-
         else:
-            # Not a recognised sigma-hole interaction.
             continue
-
-        # ----------------------------------------------------
-        # Distance between interacting atoms
-        # ----------------------------------------------------
-
-        interaction_distance = norm(coordinates[atom1_idx] - coordinates[atom2_idx])
-
-        # ----------------------------------------------------
-        # Electrophile ... nucleophile angle
-        #
-        # For sigma-hole interactions, the angle is defined
-        # at the electrophilic atom:
-        #
-        # covalent neighbour - electrophile - nucleophile
-        #
-        # If the electrophile has multiple covalent neighbours,
-        # select the angle closest to linearity.
-        # ----------------------------------------------------
 
         electrophile_neighbours = _covalent_neighbors(G, electrophile_idx)
-        contact_angle = None
-
-        if electrophile_neighbours:
-
-            E = coordinates[electrophile_idx]
-            N = coordinates[nucleophile_idx]
-            candidate_angles = []
-            neighbor_nums = []
-
-            for neighbour_idx in electrophile_neighbours:
-
-                neighbour = coordinates[neighbour_idx]
-                angle = _angle(neighbour, E, N)
-                neighbor_nums.append(neighbour_idx)
-
-                if angle is not None:
-                    candidate_angles.append(angle)
-
-            if candidate_angles:
-                best_idx = min(range(len(candidate_angles)), key=lambda i: abs(180.0 - candidate_angles[i]))
-                contact_angle = candidate_angles[best_idx]
-                neighbor_num = neighbor_nums[best_idx]
-
-        attrs = {
-            "bond_type": bond_type,
-            "neighbor_num": int(neighbor_num),
-            "electrophile_num": int(electrophile_idx),
-            "nucleophile_num": int(nucleophile_idx),
-            "neighbor_symbol": symbols[neighbor_num],
-            "electrophile_symbol": electrophile_symbol,
-            "nucleophile_symbol": symbols[nucleophile_idx],
-            "distance": float(interaction_distance),
-            "angle": (None if contact_angle is None else float(contact_angle)),
-        }
-
-        attrs.update(_bcp_properties(bcp))
-
-        G.add_edge(
-            atom1_idx,
-            atom2_idx,
-            **attrs
-        )
-
-    return G
-
-def build_graph_with_carbonyl(
-    bcps,
-    G,
-    atoms,
-    distance_cutoff=6.1,
-):
-    """
-    Find carbonyl-type n -> pi* interactions among NCI BCPs.
-
-    A BCP is classified as a carbonyl interaction if:
-
-        1. One of the two atoms nearest to the BCP is oxygen.
-        2. The other atom is carbon.
-        3. This carbon has exactly three covalently bonded
-           neighbours in graph G.
-        4. Exactly one of these covalent neighbours is oxygen.
-           Such a carbon is treated as a carbonyl carbon.
-        5. The O-C pair is not itself a covalent bond.
-
-    The oxygen is treated as the electron-density donor. It does
-    not have to be a carbonyl oxygen: it may belong to a carbonyl,
-    hydroxyl, ether, etc.
-
-    Parameters
-    ----------
-    bcps : list of dict
-        Non-covalent BCPs.
-
-    G : nx.Graph
-        Molecular graph containing atoms and covalent bonds.
-
-    atoms : list of (Z, position)
-        Atomic numbers and Cartesian coordinates.
-
-    distance_cutoff : float or None
-        Optional maximum O...C distance in bohr. If None, no
-        additional distance criterion is applied.
-
-    Returns
-    -------
-    nx.Graph
-        Graph with carbonyl interaction edges added.
-    """
-
-    if not bcps:
-        return G
-
-    coordinates = np.asarray([atom[1] for atom in atoms])
-    symbols = [get_symbol(atom[0]) for atom in atoms]
-    atom_tree = cKDTree(coordinates)
-
-    # =========================================================
-    # Determine carbonyl carbon atoms from the covalent graph
-    # =========================================================
-
-    carbonyl_carbons = set()
-
-    for atom_idx, symbol in enumerate(symbols):
-
-        if symbol != "C":
+        if not electrophile_neighbours:
             continue
 
-        covalent_neighbours = _covalent_neighbors(G, atom_idx)
-
-        # Carbonyl carbon must have exactly three covalent
-        # neighbours.
-        if len(covalent_neighbours) != 3:
-            continue
-
-        # Exactly one of them must be oxygen.
-        oxygen_neighbours = [neighbour for neighbour in covalent_neighbours if symbols[neighbour] == "O"]
-
-        if len(oxygen_neighbours) < 1:
-            continue
-
-        carbonyl_carbons.add(atom_idx)
-
-    # =========================================================
-    # Process NCI BCPs
-    # =========================================================
-
-    for bcp in tqdm(bcps, desc="Searching carbonyl interactions"):
-
-        position = np.asarray(bcp["position"])
-
-        # -----------------------------------------------------
-        # Two atoms nearest to the BCP
-        # -----------------------------------------------------
-
-        distances, indices = atom_tree.query(position, k=2)
-
-        atom1_idx = int(indices[0])
-        atom2_idx = int(indices[1])
-
-        if atom1_idx == atom2_idx:
-            continue
-
-        symbol1 = symbols[atom1_idx]
-        symbol2 = symbols[atom2_idx]
-
-        # -----------------------------------------------------
-        # One atom must be O, the other carbonyl C
-        # -----------------------------------------------------
-
-        if symbol1 == "O" and atom2_idx in carbonyl_carbons:
-
-            donor_oxygen = atom1_idx
-            acceptor_carbon = atom2_idx
-
-        elif symbol2 == "O" and atom1_idx in carbonyl_carbons:
-
-            donor_oxygen = atom2_idx
-            acceptor_carbon = atom1_idx
-
-        else:
-            continue
-
-        # -----------------------------------------------------
-        # Do not classify an ordinary covalent C-O bond
-        # as a non-covalent carbonyl interaction.
-        # -----------------------------------------------------
-
-        if G.has_edge(donor_oxygen, acceptor_carbon) and G.edges[donor_oxygen, acceptor_carbon].get("bond_type") == "covalent":
-            continue
-
-        # -----------------------------------------------------
-        # O...C distance
-        # -----------------------------------------------------
-
-        interaction_distance = norm(coordinates[donor_oxygen] - coordinates[acceptor_carbon])
-
-        if (distance_cutoff is not None and interaction_distance > distance_cutoff):
-            continue
-
-        # =====================================================
-        # Carbonyl geometry
-        # =====================================================
-
-        C = coordinates[acceptor_carbon]
-        O = coordinates[donor_oxygen]
-
-        # -----------------------------------------------------
-        # Burgi-Dunitz-type angle
-        #
-        # For a carbonyl carbon, find the covalent neighbour
-        # direction closest to the incoming O...C vector.
-        # -----------------------------------------------------
-
-        carbonyl_neighbours = _covalent_neighbors(G, acceptor_carbon)
+        E = coordinates[electrophile_idx]
+        N = coordinates[nucleophile_idx]
         candidate_angles = []
-
-        for neighbour_idx in carbonyl_neighbours:
-
-            X = coordinates[neighbour_idx]
-
-            angle = _angle(X, C, O)
-
+        for neighbour_idx in electrophile_neighbours:
+            angle = _angle(coordinates[neighbour_idx], E, N)
             if angle is not None:
                 candidate_angles.append((abs(180.0 - angle), angle, neighbour_idx))
 
-        if candidate_angles:
-            _, burgi_dunitz_angle, neighbour_idx = min(candidate_angles, key=lambda x: x[0])
+        if not candidate_angles:
+            continue
 
+        _, contact_angle, neighbour_num = min(candidate_angles, key=lambda x: x[0])
+        if contact_angle < 140.0:
+            continue
+
+        attrs = {
+            "bond_type": bond_type,
+            "neighbor_num": int(neighbour_num),
+            "electrophile_num": int(electrophile_idx),
+            "nucleophile_num": int(nucleophile_idx),
+            "neighbor_symbol": symbols[neighbour_num],
+            "electrophile_symbol": electrophile_symbol,
+            "nucleophile_symbol": symbols[nucleophile_idx],
+            "distance": float(distance),
+            "angle": float(contact_angle),
+        }
+        attrs.update(_bcp_properties(bcp))
+        G.add_edge(atom1_idx, atom2_idx, **attrs)
+
+    return G
+
+
+# ============================================================================
+# 20. Carbonyl n -> pi*
+# ============================================================================
+
+def _identify_carbonyl_carbons(
+    G: nx.Graph,
+    atoms: List[Tuple[int, np.ndarray]],
+    carbonyl_max_distance: float = 1.35,
+) -> Dict[int, int]:
+    """
+    Identify carbonyl carbons from the covalent graph.
+
+    A C atom is considered carbonyl-like if:
+      - it has at least one covalent O neighbour;
+      - the shortest C-O covalent distance <= threshold.
+
+    This is more robust than requiring exactly three neighbours.
+    """
+    coordinates = np.asarray([atom[1] for atom in atoms], dtype=float)
+    symbols = [get_symbol(atom[0]) for atom in atoms]
+
+    carbonyls = {}
+    for idx, symbol in enumerate(symbols):
+        if symbol != "C":
+            continue
+        neighbours = _covalent_neighbors(G, idx)
+        oxygen_neighbours = []
+        for neighbour in neighbours:
+            if symbols[neighbour] != "O":
+                continue
+            dist = norm(coordinates[idx] - coordinates[neighbour]) * bohr_to_angstrom
+            if dist <= carbonyl_max_distance:
+                oxygen_neighbours.append(neighbour)
+
+        if oxygen_neighbours:
+            carbonyl_oxygen = min(oxygen_neighbours, key=lambda j: norm(coordinates[idx] - coordinates[j]))
+            carbonyls[idx] = carbonyl_oxygen
+
+    return carbonyls
+
+
+def build_graph_with_carbonyl(
+    bcps: List[Dict],
+    G: nx.Graph,
+    atoms: List[Tuple[int, np.ndarray]],
+    distance_cutoff: float = 3.22,
+    angle_min: float = 90.0,
+    angle_max: float = 130.0,
+) -> nx.Graph:
+    """
+    Detect n -> pi* interactions.
+
+    Geometry:
+        donor Y ... C=O
+
+        Y...C <= 3.22 Å
+        angle Y...C-O = 95-125 degrees
+
+    These correspond to the commonly used Bürgi-Dunitz-like
+    geometry of carbonyl n -> pi* interactions.
+    """
+    if not bcps:
+        return G
+
+    coordinates = np.asarray([atom[1] for atom in atoms], dtype=float)
+    symbols = [get_symbol(atom[0]) for atom in atoms]
+    carbonyls = _identify_carbonyl_carbons(G, atoms)
+
+    for bcp in tqdm(bcps, desc="Searching n->pi* interactions"):
+        i = int(bcp["atom1"])
+        j = int(bcp["atom2"])
+
+        if symbols[i] == "O" and j in carbonyls:
+            donor_oxygen, acceptor_carbon = i, j
+        elif symbols[j] == "O" and i in carbonyls:
+            donor_oxygen, acceptor_carbon = j, i
         else:
+            continue
 
-            burgi_dunitz_angle = None
-            neighbour_idx = None
+        carbonyl_oxygen = carbonyls[acceptor_carbon]
+        if donor_oxygen == carbonyl_oxygen:
+            continue
 
+        distance = norm(coordinates[donor_oxygen] - coordinates[acceptor_carbon]) * bohr_to_angstrom
+        if distance > distance_cutoff:
+            continue
+
+        angle = _angle(coordinates[donor_oxygen], coordinates[acceptor_carbon], coordinates[carbonyl_oxygen])
+        if angle is None or not (angle_min <= angle <= angle_max):
+            continue
+
+        # Carbonyl plane and pyramidalization-like descriptor
+        carbon_neighbours = _covalent_neighbors(G, acceptor_carbon)
+        substituents = [n for n in carbon_neighbours if n != carbonyl_oxygen]
         plane_angle = None
-
-        if len(carbonyl_neighbours) == 3:
-
-            neighbour_coords = np.asarray([coordinates[idx] for idx in carbonyl_neighbours])
-
-            plane_centre = neighbour_coords.mean(axis=0)
-            centered = (neighbour_coords - plane_centre)
-
-            try:
-                _, _, vh = np.linalg.svd(centered, full_matrices=False)
-                normal = vh[-1]
-                normal_norm = norm(normal)
-
-                if normal_norm > 0.0:
-
-                    normal = (normal / normal_norm)
-
-                    CO_vector = O - C
-                    CO_norm = norm(CO_vector)
-
-                    if CO_norm > 0.0:
-
-                        angle_to_normal = np.degrees(
-                            np.arccos(
-                                np.clip(
-                                    abs(
-                                        np.dot(
-                                            CO_vector,
-                                            normal
-                                        )
-                                    )
-                                    / CO_norm,
-                                    0.0,
-                                    1.0
-                                )
-                            )
-                        )
-
-                        # Convert angle to the angle between
-                        # the O...C vector and the carbonyl plane.
-                        plane_angle = (
-                            90.0
-                            - angle_to_normal
-                        )
-
-            except np.linalg.LinAlgError:
-                plane_angle = None
-
-        # =====================================================
-        # Edge attributes
-        # =====================================================
+        if len(substituents) >= 2:
+            coords = np.asarray([coordinates[n] for n in substituents])
+            plane = _fit_ring_plane(coords)
+            if plane is not None:
+                _, normal, _, _ = plane
+                vector = coordinates[donor_oxygen] - coordinates[acceptor_carbon]
+                vnorm = norm(vector)
+                if vnorm > 1.0e-12:
+                    plane_angle = np.degrees(np.arcsin(np.clip(abs(np.dot(vector, normal)) / vnorm, 0.0, 1.0)))
 
         attrs = {
             "bond_type": "carbonyl",
             "donor_oxygen": int(donor_oxygen),
             "acceptor_carbon": int(acceptor_carbon),
+            "carbonyl_oxygen": int(carbonyl_oxygen),
             "donor_symbol": symbols[donor_oxygen],
             "acceptor_symbol": symbols[acceptor_carbon],
-            "distance": float(interaction_distance),
-            "burgi_dunitz_angle": (None if burgi_dunitz_angle is None else float(burgi_dunitz_angle)),
-            "plane_angle": (None if plane_angle is None else float(plane_angle)),
-            "carbonyl_oxygen": int(_covalent_neighbors(G, acceptor_carbon)[0]
-                if (
-                    len(_covalent_neighbors(G, acceptor_carbon)) == 1
-            )
-                else next(
-                    neighbour for neighbour in _covalent_neighbors(G, acceptor_carbon) if symbols[neighbour] == "O"
-                )
-            ),
+            "distance": float(distance),
+            "burgi_dunitz_angle": float(angle),
+            "plane_angle": None if plane_angle is None else float(plane_angle),
         }
-
-        attrs.update(
-            _bcp_properties(bcp)
-        )
-
-        # -----------------------------------------------------
-        # Add the interaction edge
-        # -----------------------------------------------------
-
-        G.add_edge(
-            donor_oxygen,
-            acceptor_carbon,
-            **attrs
-        )
+        attrs.update(_bcp_properties(bcp))
+        G.add_edge(donor_oxygen, acceptor_carbon, **attrs)
 
     return G
 
+
+# ============================================================================
+# 21. Unclassified NCI contacts
+# ============================================================================
+
+def _collect_classified_bcp_positions(G: nx.Graph) -> List[np.ndarray]:
+    """
+    Return positions of all BCPs already represented in graph edges.
+    """
+    positions = []
+    for _, _, data in G.edges(data=True):
+        bond_type = data.get("bond_type")
+        if bond_type in {None, "covalent", "aromatic"}:
+            continue
+        position = data.get("position")
+        if position is not None:
+            positions.append(np.asarray(position))
+    return positions
+
+
 def build_graph_with_unclassified(
-    bcps,
-    G,
-    atoms,
-    position_tolerance=0.1,
-    search_radius=3.8,
-    bcp_angle_threshold=150,
-):
+    bcps: List[Dict],
+    G: nx.Graph,
+    atoms: List[Tuple[int, np.ndarray]],
+    position_tolerance: float = 0.10,
+) -> nx.Graph:
     """
-    Add all remaining NCI BCPs that were not assigned to a
-    classified interaction as 'unclassified' graph edges.
+    Add remaining NCI BCPs as unclassified contacts.
 
-    A BCP is considered already classified if an edge in G
-    contains an interaction BCP at essentially the same spatial
-    position. The comparison is performed using position_tolerance
-    in bohr.
-
-    This function deliberately does not impose additional
-    chemical criteria: the purpose is to retain information about
-    potentially relevant non-covalent contacts that could not be
-    assigned to HB, XB, ChB, PnB, pi interactions, carbonyl
-    interactions, etc.
-
-    Additionally, two types of BCPs are skipped:
-      1. If one atom belongs to an aromatic ring and the other atom
-         is also associated with the same aromatic ring (e.g., as a
-         substituent or another ring atom). This is detected by
-         checking if the sets of aromatic centers (from
-         _aromatic_membership) intersect.
-      2. If both atoms belong to aromatic rings and there already
-         exists a "stacking" or "T-stacking" edge between the
-         corresponding aromatic centers.
-
-    Parameters
-    ----------
-    bcps : list of dict
-        Original NCI BCPs satisfying the rho criterion.
-
-    G : nx.Graph
-        Molecular graph after all classified NCI interactions
-        have been added.
-
-    atoms : list of (Z, position)
-        Atomic numbers and Cartesian coordinates.
-
-    position_tolerance : float
-        Maximum distance between two BCP positions for them to
-        be considered the same BCP. Units: bohr.
-
-    search_radius : float
-        Radius around the BCP to search for candidate atoms.
-
-    bcp_angle_threshold : float
-        Minimum angle (degrees) between the two atoms as seen
-        from the BCP. Pairs with angle below this value are rejected.
-
-    Returns
-    -------
-    nx.Graph
-        Graph with additional 'unclassified' edges.
+    position_tolerance is in Angstrom.
     """
-
     if not bcps:
         return G
 
-    coordinates = np.asarray([atom[1] for atom in atoms])
+    coordinates = np.asarray([atom[1] for atom in atoms], dtype=float)
     symbols = [get_symbol(atom[0]) for atom in atoms]
-    atom_tree = cKDTree(coordinates)
 
-    # =========================================================
-    # Collect positions of BCPs already represented in the graph
-    # =========================================================
+    classified_positions = _collect_classified_bcp_positions(G)
+    classified_tree = cKDTree(np.asarray(classified_positions)) if classified_positions else None
+    tolerance_bohr = position_tolerance * ANGSTROM_TO_BOHR
 
-    classified_positions = []
-
-    classified_types = {"covalent", "aromatic",}
-
-    for _, _, data in G.edges(data=True):
-        bond_type = data.get("bond_type")
-
-        if bond_type in classified_types:
-            continue
-
-        position = data.get("position")
-
-        if position is None:
-            continue
-
-        classified_positions.append(np.asarray(position))
-
-    # KD-tree makes repeated BCP-position comparisons inexpensive.
-    if classified_positions:
-        classified_tree = cKDTree(np.asarray(classified_positions))
-
-    else:
-        classified_tree = None
-
-    # =========================================================
-    # Process all NCI BCPs
-    # =========================================================
-
-    for bcp in tqdm(bcps, desc="Searching unclassified NCI contacts"):
-
+    for bcp in tqdm(bcps, desc="Collecting unclassified NCI"):
         position = np.asarray(bcp["position"])
-
-        # ----------------------------------------------------
-        # Skip if this BCP is already classified
-        # ----------------------------------------------------
-
         if classified_tree is not None:
-            distance, _ = classified_tree.query(position, k=1)
-            if distance <= position_tolerance:
+            dist, _ = classified_tree.query(position, k=1)
+            if dist <= tolerance_bohr:
                 continue
 
-        # ----------------------------------------------------
-        # Find all atoms within search_radius from the BCP
-        # ----------------------------------------------------
-
-        indices_in_radius = atom_tree.query_ball_point(position, search_radius)
-
-        if len(indices_in_radius) < 2:
+        i = int(bcp["atom1"])
+        j = int(bcp["atom2"])
+        if i == j:
             continue
 
-        # ----------------------------------------------------
-        # Find the best pair: angle >= threshold and minimal sum of distances
-        # ----------------------------------------------------
-
-        best_pair = None
-        best_sum_dist = float('inf')
-
-        for i in range(len(indices_in_radius)):
-            idx1 = indices_in_radius[i]
-            for idx2 in indices_in_radius[i+1:]:
-                if idx1 == idx2:
-                    continue
-
-                angle = _angle(coordinates[idx1], position, coordinates[idx2])
-                if angle is None or angle < bcp_angle_threshold:
-                    continue
-
-                d1 = norm(coordinates[idx1] - position)
-                d2 = norm(coordinates[idx2] - position)
-                sum_dist = d1 + d2
-
-                if sum_dist < best_sum_dist:
-                    best_sum_dist = sum_dist
-                    best_pair = (idx1, idx2)
-
-        if best_pair is None:
+        # Do not duplicate a pair already carrying an NCI edge.
+        if _edge_has_type(
+            G, i, j,
+            {"HB", "XB", "ChB", "PnB", "stacking", "T-stacking", "H-pi", "n-pi", "carbonyl"}
+        ):
             continue
 
-        atom1_idx, atom2_idx = np.min(best_pair), np.max(best_pair)
-
-        # ----------------------------------------------------
-        # Skip if this edge already exists in the graph
-        # ----------------------------------------------------
-
-        if G.has_edge(atom1_idx, atom2_idx):
+        # Avoid same-ring internal contacts.
+        aromatic1, rings1 = _aromatic_membership(G, i)
+        aromatic2, rings2 = _aromatic_membership(G, j)
+        if aromatic1 and aromatic2 and set(rings1) & set(rings2):
             continue
 
-        # ----------------------------------------------------
-        # Condition 1: Both atoms are associated with the same aromatic ring
-        # ----------------------------------------------------
-        skip = False
-
-        aromatic1, rings1 = _aromatic_membership(G, atom1_idx)
-        aromatic2, rings2 = _aromatic_membership(G, atom2_idx)
-
-        # If they share any common aromatic center, skip
-        if aromatic1:
-            for ring in rings1:
-                # Check if atom2 has an edge to this ring of type H-pi or n-pi
-                if G.has_edge(atom2_idx, ring):
-                    bond_type = G.edges[atom2_idx, ring].get('bond_type')
-                    if bond_type in ('H-pi', 'n-pi'):
-                        skip = True
-                        break
-
-        if not skip and aromatic2:
-            for ring in rings2:
-                if G.has_edge(atom1_idx, ring):
-                    bond_type = G.edges[atom1_idx, ring].get('bond_type')
-                    if bond_type in ('H-pi', 'n-pi'):
-                        skip = True
-                        break
-
-        # ----------------------------------------------------
-        # Condition 2: If both are aromatic and there is already
-        # a stacking/T-stacking edge between their rings
-        # ----------------------------------------------------
-
+        # Skip if the two atoms belong to two different aromatic rings
+        # that are already connected by a stacking or T-stacking interaction.
         if aromatic1 and aromatic2:
-            # Check all pairs of rings
-            skip_due_to_stacking = False
-            for ring1 in rings1:
-                for ring2 in rings2:
-                    # Check if there is an edge between these two ring nodes
-                    if G.has_edge(ring1, ring2):
-                        edge_data = G.edges[ring1, ring2]
-                        bond_type = edge_data.get("bond_type")
-                        if bond_type in {"stacking", "T-stacking"}:
-                            skip_due_to_stacking = True
-                            break
-                if skip_due_to_stacking:
+            skip = False
+            for ri in rings1:
+                for rj in rings2:
+                    if _edge_has_type(G, ri, rj, {"stacking", "T-stacking"}):
+                        skip = True
+                        break
+                if skip:
                     break
-            if skip_due_to_stacking:
+            if skip:
                 continue
 
-        # -----------------------------------------------------
-        # Atom-atom distance
-        # -----------------------------------------------------
-
-        interaction_distance = norm(coordinates[atom1_idx] - coordinates[atom2_idx])
-
+        distance = norm(coordinates[i] - coordinates[j]) * bohr_to_angstrom
         attrs = {
             "bond_type": "unclassified",
-            "atom1_num": int(atom1_idx),
-            "atom2_num": int(atom2_idx),
-            "atom1_symbol": symbols[atom1_idx],
-            "atom2_symbol": symbols[atom2_idx],
-            "distance": float(interaction_distance),
+            "atom1_num": int(i),
+            "atom2_num": int(j),
+            "atom1_symbol": symbols[i],
+            "atom2_symbol": symbols[j],
+            "distance": float(distance),
         }
-
         attrs.update(_bcp_properties(bcp))
-
-        G.add_edge(
-            atom1_idx,
-            atom2_idx,
-            **attrs
-        )
-
-        # -----------------------------------------------------
-        # Immediately register this BCP as classified.
-        # -----------------------------------------------------
+        G.add_edge(i, j, **attrs)
 
         classified_positions.append(position.copy())
-
-        # Rebuild KD-tree after adding each new position
         classified_tree = cKDTree(np.asarray(classified_positions))
 
     return G
 
-# --------------------------------------------------------------------------- #
-# Output writer
-# --------------------------------------------------------------------------- #
+
+# ============================================================================
+# 22. Output
+# ============================================================================
 
 def output(
     G: nx.Graph,
     filename: str = "default",
-    ext: str = ".default",
+    ext: str = ".cube",
     correlation=correlation_1,
-) -> None:
+) -> str:
     """
-    Write a formatted .nci file summarising all detected interactions.
+    Write .nci report.
 
-    All geometrical quantities stored in the graph are assumed to be
-    expressed in bohr. They are converted to Å only when writing the
-    output file.
-
-    Non-geometrical quantities such as rho, Laplacian and ellipticity
-    are written without conversion.
-
-    Parameters
-    ----------
-    G : nx.Graph
-        Molecular graph containing covalent and non-covalent interactions.
-
-    filename : str
-        Output filename without extension.
-
-    ext : str
-        Extension of the original input file.
-
-    correlation : callable
-        Energy-estimation function for hydrogen bonds.
+    All distances are written in Angstrom.
     """
-
     now = datetime.now()
 
-    BOHR_TO_ANGSTROM = bohr_to_angstrom
-
-    # ===================================================================== #
-    # Group graph edges by interaction type
-    # ===================================================================== #
-
     edges_by_type = {}
-
     for _, _, data in G.edges(data=True):
-
-        bond_type = data.get(
-            "bond_type"
-        )
-
+        bond_type = data.get("bond_type")
         if bond_type is None:
             continue
+        edges_by_type.setdefault(bond_type, []).append(data)
 
-        edges_by_type.setdefault(
-            bond_type,
-            []
-        ).append(data)
+    def atom_number(data: Dict, key: str) -> str:
+        value = data.get(key)
+        return "—" if value is None else str(int(value) + 1)
 
-    # ===================================================================== #
-    # Helper functions
-    # ===================================================================== #
+    def fmt_float(data: Dict, key: str, digits: int = 3) -> str:
+        value = data.get(key)
+        return "—" if value is None else str(round(float(value), digits))
 
-    def atom_number(data, key):
-        """
-        Return atom number in human-readable 1-based notation.
-        """
+    def fmt_distance(data: Dict, key: str, digits: int = 3) -> str:
+        value = data.get(key)
+        return "—" if value is None else str(round(float(value), digits))
 
-        value = data.get(
-            key
-        )
+    def fmt_rho(data: Dict) -> str:
+        return fmt_float(data, "rho", 5)
 
-        if value is None:
-            return "—"
+    def fmt_laplacian(data: Dict) -> str:
+        return fmt_float(data, "laplacian", 5)
 
-        return int(value) + 1
-
-    def fmt_float(data, key, digits=3):
-        """
-        Format a floating-point edge attribute without unit conversion.
-        """
-
-        value = data.get(
-            key
-        )
-
-        if value is None:
-            return "—"
-
-        return round(
-            float(value),
-            digits
-        )
-
-    def fmt_distance(data, key, digits=3):
-        """
-        Retrieve a distance stored in bohr and convert it to Å.
-        """
-
-        value = data.get(
-            key
-        )
-
-        if value is None:
-            return "—"
-
-        return round(
-            float(value)
-            * BOHR_TO_ANGSTROM,
-            digits
-        )
-
-    def fmt_rho(data):
-        """
-        Electron density at the BCP.
-        """
-
-        return fmt_float(
-            data,
-            "rho",
-            5
-        )
-
-    def fmt_laplacian(data):
-        """
-        Laplacian of electron density at the BCP.
-        """
-
-        return fmt_float(
-            data,
-            "laplacian",
-            5
-        )
-
-    def fmt_ellipticity(data):
-        """
-        Ellipticity of the electron density.
-        """
-
-        return fmt_float(
-            data,
-            "ellipticity",
-            3
-        )
-
-    # ===================================================================== #
-    # Section configuration
-    # ===================================================================== #
+    def fmt_ellipticity(data: Dict) -> str:
+        return fmt_float(data, "ellipticity", 3)
 
     sections = [
-
-        # ----------------------------------------------------------------- #
-        # Hydrogen bonds
-        # ----------------------------------------------------------------- #
-
         {
             "key": "HB",
             "title": "HYDROGEN BONDS",
-
             "header": [
-                "№",
-                "Type",
-                "D",
-                "H",
-                "A",
-                "D-H (Å)",
-                "H···A (Å)",
-                "D···A (Å)",
-                "Angle (°)",
-                "ρ, a.u.",
-                "∇²ρ, a.u.",
-                "ε",
-                "Energy (kcal/mol)",
+                "№", "Type", "D", "H", "A",
+                "D-H (Å)", "H···A (Å)", "D···A (Å)", "Angle (°)",
+                "ρ", "∇²ρ", "ε", "Energy"
             ],
-
             "row_func": lambda d, i: [
                 i + 1,
-
-                f"{d['donor_symbol']}-H···"
-                f"{d['acceptor_symbol']}",
-
-                atom_number(
-                    d,
-                    "donor_num"
-                ),
-
-                atom_number(
-                    d,
-                    "hydrogen_num"
-                ),
-
-                atom_number(
-                    d,
-                    "acceptor_num"
-                ),
-
-                fmt_distance(
-                    d,
-                    "h_donor_distance"
-                ),
-
-                fmt_distance(
-                    d,
-                    "distance"
-                ),
-
-                fmt_distance(
-                    d,
-                    "heavy_atom_distance"
-                ),
-
-                fmt_float(
-                    d,
-                    "angle",
-                    1
-                ),
-
+                f"{d['donor_symbol']}-H···{d['acceptor_symbol']}",
+                atom_number(d, "donor_num"),
+                atom_number(d, "hydrogen_num"),
+                atom_number(d, "acceptor_num"),
+                fmt_distance(d, "h_donor_distance"),
+                fmt_distance(d, "distance"),
+                fmt_distance(d, "heavy_atom_distance"),
+                fmt_float(d, "angle", 1),
                 fmt_rho(d),
                 fmt_laplacian(d),
                 fmt_ellipticity(d),
-
-                round(
-                    float(
-                        correlation(
-                            float(d["rho"]),
-                            f"{d['donor_symbol']}-H..."
-                            f"{d['acceptor_symbol']}",
-                        )
-                    ),
-                    1,
-                ),
+                round(float(correlation(float(d["rho"]), f"{d['donor_symbol']}-H...{d['acceptor_symbol']}")), 1),
             ],
         },
-
-        # ----------------------------------------------------------------- #
-        # Halogen bonds
-        # ----------------------------------------------------------------- #
-
-        {
-            "key": "XB",
-            "title": "HALOGEN BONDS",
-
-            "header": [
-                "№",
-                "Type",
-                "X",
-                "D",
-                "A",
-                "D···A (Å)",
-                "Angle (°)",
-                "ρ, a.u.",
-                "∇²ρ, a.u.",
-                "ε",
-            ],
-
-            "row_func": lambda d, i: [
-                i + 1,
-
-                f"{d.get('neighbor_symbol', '—')}-"
-                f"{d.get('electrophile_symbol', '—')}···"
-                f"{d.get('nucleophile_symbol', '—')}",
-
-                atom_number(
-                    d,
-                    "neighbor_num"
-                ),
-
-                atom_number(
-                    d,
-                    "electrophile_num"
-                ),
-
-                atom_number(
-                    d,
-                    "nucleophile_num"
-                ),
-
-                fmt_distance(
-                    d,
-                    "distance"
-                ),
-
-                fmt_float(
-                    d,
-                    "angle",
-                    1
-                ),
-
-                fmt_rho(d),
-                fmt_laplacian(d),
-                fmt_ellipticity(d),
-            ],
-        },
-
-        # ----------------------------------------------------------------- #
-        # Chalcogen bonds
-        # ----------------------------------------------------------------- #
-
-        {
-            "key": "ChB",
-            "title": "CHALCOGEN BONDS",
-
-            "header": [
-                "№",
-                "Type",
-                "X",
-                "D",
-                "A",
-                "D···A (Å)",
-                "Angle (°)",
-                "ρ, a.u.",
-                "∇²ρ, a.u.",
-                "ε",
-            ],
-
-            "row_func": lambda d, i: [
-                i + 1,
-
-                f"{d.get('neighbor_symbol', '—')}-"
-                f"{d.get('electrophile_symbol', '—')}···"
-                f"{d.get('nucleophile_symbol', '—')}",
-
-                atom_number(
-                    d,
-                    "neighbor_num"
-                ),
-
-                atom_number(
-                    d,
-                    "electrophile_num"
-                ),
-
-                atom_number(
-                    d,
-                    "nucleophile_num"
-                ),
-
-                fmt_distance(
-                    d,
-                    "distance"
-                ),
-
-                fmt_float(
-                    d,
-                    "angle",
-                    1
-                ),
-
-                fmt_rho(d),
-                fmt_laplacian(d),
-                fmt_ellipticity(d),
-            ],
-        },
-
-        # ----------------------------------------------------------------- #
-        # Pnictogen bonds
-        # ----------------------------------------------------------------- #
-
-        {
-            "key": "PnB",
-            "title": "PNICTOGEN BONDS",
-
-            "header": [
-                "№",
-                "Type",
-                "X",
-                "D",
-                "A",
-                "D···A (Å)",
-                "Angle (°)",
-                "ρ, a.u.",
-                "∇²ρ, a.u.",
-                "ε",
-            ],
-
-            "row_func": lambda d, i: [
-                i + 1,
-
-                f"{d.get('neighbor_symbol', '—')}-"
-                f"{d.get('electrophile_symbol', '—')}···"
-                f"{d.get('nucleophile_symbol', '—')}",
-
-                atom_number(
-                    d,
-                    "neighbor_num"
-                ),
-
-                atom_number(
-                    d,
-                    "electrophile_num"
-                ),
-
-                atom_number(
-                    d,
-                    "nucleophile_num"
-                ),
-
-                fmt_distance(
-                    d,
-                    "distance"
-                ),
-
-                fmt_float(
-                    d,
-                    "angle",
-                    1
-                ),
-
-                fmt_rho(d),
-                fmt_laplacian(d),
-                fmt_ellipticity(d),
-            ],
-        },
-
-        # ----------------------------------------------------------------- #
-        # π-π stacking
-        # ----------------------------------------------------------------- #
-
+        {"key": "XB", "title": "HALOGEN BONDS"},
+        {"key": "ChB", "title": "CHALCOGEN BONDS"},
+        {"key": "PnB", "title": "PNICTOGEN BONDS"},
         {
             "key": "stacking",
             "title": "π-π STACKING",
-
-            "header": [
-                "№",
-                "Type",
-                "Atom of Ring 1",
-                "Atom of Ring 2",
-                "Centroid (Å)",
-                "Offset (Å)",
-                "Angle (°)",
-            ],
-
+            "header": ["№", "Type", "Ring 1", "Ring 2", "Centroid (Å)", "Offset (Å)", "Angle (°)"],
             "row_func": lambda d, i: [
-                i + 1,
-                "parallel",
-
-                atom_number(
-                    d,
-                    "atom_num_cycle_1"
-                ),
-
-                atom_number(
-                    d,
-                    "atom_num_cycle_2"
-                ),
-
-                fmt_distance(
-                    d,
-                    "centroid_distance"
-                ),
-
-                fmt_distance(
-                    d,
-                    "offset"
-                ),
-
-                fmt_float(
-                    d,
-                    "angle",
-                    1
-                ),
+                i + 1, "parallel",
+                atom_number(d, "atom_num_cycle_1"),
+                atom_number(d, "atom_num_cycle_2"),
+                fmt_distance(d, "centroid_distance"),
+                fmt_distance(d, "offset"),
+                fmt_float(d, "angle", 1),
             ],
         },
-
-        # ----------------------------------------------------------------- #
-        # T-stacking
-        # ----------------------------------------------------------------- #
-
         {
             "key": "T-stacking",
             "title": "T-SHAPED STACKING",
-
-            "header": [
-                "№",
-                "Type",
-                "Atom of Ring 1",
-                "Atom of Ring 2",
-                "Centroid (Å)",
-                "Angle (°)",
-            ],
-
+            "header": ["№", "Type", "Ring 1", "Ring 2", "Centroid (Å)", "Angle (°)"],
             "row_func": lambda d, i: [
-                i + 1,
-                "T-shaped",
-
-                atom_number(
-                    d,
-                    "atom_num_cycle_1"
-                ),
-
-                atom_number(
-                    d,
-                    "atom_num_cycle_2"
-                ),
-
-                fmt_distance(
-                    d,
-                    "centroid_distance"
-                ),
-
-                fmt_float(
-                    d,
-                    "angle",
-                    1
-                ),
+                i + 1, "T-shaped",
+                atom_number(d, "atom_num_cycle_1"),
+                atom_number(d, "atom_num_cycle_2"),
+                fmt_distance(d, "centroid_distance"),
+                fmt_float(d, "angle", 1),
             ],
         },
-
-        # ----------------------------------------------------------------- #
-        # X-H···π
-        # ----------------------------------------------------------------- #
-
         {
             "key": "H-pi",
             "title": "X-H···π INTERACTIONS",
-
-            "header": [
-                "№",
-                "Type",
-                "X",
-                "H",
-                "Atom of Ring",
-                "H···π (Å)",
-                "Angle (°)",
-                "Projection (Å)",
-            ],
-
+            "header": ["№", "Type", "X", "H", "Ring", "H···π (Å)", "Angle (°)", "Projection (Å)"],
             "row_func": lambda d, i: [
                 i + 1,
-
                 f"{d['symbol_x']}-H···π",
-
-                atom_number(
-                    d,
-                    "x_num"
-                ),
-
-                atom_number(
-                    d,
-                    "h_num"
-                ),
-
-                atom_number(
-                    d,
-                    "atom_num_cycle"
-                ),
-
-                fmt_distance(
-                    d,
-                    "h_centroid_distance"
-                ),
-
-                fmt_float(
-                    d,
-                    "angle",
-                    1
-                ),
-
-                fmt_distance(
-                    d,
-                    "projection_distance"
-                ),
+                atom_number(d, "x_num"),
+                atom_number(d, "h_num"),
+                atom_number(d, "atom_num_cycle"),
+                fmt_distance(d, "h_centroid_distance"),
+                fmt_float(d, "angle", 1),
+                fmt_distance(d, "projection_distance"),
             ],
         },
-
-        # ----------------------------------------------------------------- #
-        # Lone pair···π
-        # ----------------------------------------------------------------- #
-
         {
             "key": "n-pi",
             "title": "LONE PAIR···π",
-
-            "header": [
-                "№",
-                "Type",
-                "Atom",
-                "Atom of Ring",
-                "Distance (Å)",
-                "Angle (°)",
-            ],
-
+            "header": ["№", "Type", "Atom", "Ring", "Distance (Å)", "Angle (°)"],
             "row_func": lambda d, i: [
                 i + 1,
-
                 f"{d['symbol_lp']}···π",
-
-                atom_number(
-                    d,
-                    "lp_num"
-                ),
-
-                atom_number(
-                    d,
-                    "atom_num_cycle"
-                ),
-
-                fmt_distance(
-                    d,
-                    "lp_centroid_distance"
-                ),
-
-                fmt_float(
-                    d,
-                    "angle",
-                    1
-                ),
+                atom_number(d, "lp_num"),
+                atom_number(d, "atom_num_cycle"),
+                fmt_distance(d, "lp_centroid_distance"),
+                fmt_float(d, "angle", 1),
             ],
         },
-
-        # ----------------------------------------------------------------- #
-        # Carbonyl n→π*
-        # ----------------------------------------------------------------- #
-
         {
             "key": "carbonyl",
             "title": "CARBONYL n→π*",
-
-            "header": [
-                "№",
-                "Type",
-                "Donor O",
-                "Acceptor C",
-                "Distance (Å)",
-                "BD angle (°)",
-                "Plane angle (°)",
-                "ρ, a.u.",
-                "∇²ρ, a.u.",
-                "ε",
-            ],
-
+            "header": ["№", "Type", "Donor", "Acceptor C", "C=O", "Distance (Å)", "BD angle (°)", "Plane angle (°)", "ρ", "∇²ρ", "ε"],
             "row_func": lambda d, i: [
-                i + 1,
-
-                "n→π*",
-
-                atom_number(
-                    d,
-                    "donor_oxygen"
-                ),
-
-                atom_number(
-                    d,
-                    "acceptor_carbon"
-                ),
-
-                fmt_distance(
-                    d,
-                    "distance"
-                ),
-
-                fmt_float(
-                    d,
-                    "burgi_dunitz_angle",
-                    1
-                ),
-
-                (
-                    "—"
-                    if d.get("plane_angle") is None
-                    else round(
-                        float(
-                            d["plane_angle"]
-                        ),
-                        1
-                    )
-                ),
-
+                i + 1, "n→π*",
+                atom_number(d, "donor_oxygen"),
+                atom_number(d, "acceptor_carbon"),
+                atom_number(d, "carbonyl_oxygen"),
+                fmt_distance(d, "distance"),
+                fmt_float(d, "burgi_dunitz_angle", 1),
+                fmt_float(d, "plane_angle", 1),
                 fmt_rho(d),
                 fmt_laplacian(d),
                 fmt_ellipticity(d),
             ],
         },
-
-        # ----------------------------------------------------------------- #
-        # Unclassified NCI contacts
-        # ----------------------------------------------------------------- #
-
         {
             "key": "unclassified",
             "title": "UNCLASSIFIED NON-COVALENT CONTACTS",
-
-            "header": [
-                "№",
-                "Type",
-                "Atom 1",
-                "Atom 2",
-                "Element 1",
-                "Element 2",
-                "Distance (Å)",
-                "ρ, a.u.",
-                "∇²ρ, a.u.",
-                "ε",
-            ],
-
+            "header": ["№", "Type", "Atom 1", "Atom 2", "Element 1", "Element 2", "Distance (Å)", "ρ", "∇²ρ", "ε"],
             "row_func": lambda d, i: [
-                i + 1,
-
-                "unclassified",
-
-                atom_number(
-                    d,
-                    "atom1_num"
-                ),
-
-                atom_number(
-                    d,
-                    "atom2_num"
-                ),
-
-                d.get(
-                    "atom1_symbol",
-                    "—"
-                ),
-
-                d.get(
-                    "atom2_symbol",
-                    "—"
-                ),
-
-                fmt_distance(
-                    d,
-                    "distance"
-                ),
-
+                i + 1, "unclassified",
+                atom_number(d, "atom1_num"),
+                atom_number(d, "atom2_num"),
+                d.get("atom1_symbol", "—"),
+                d.get("atom2_symbol", "—"),
+                fmt_distance(d, "distance"),
                 fmt_rho(d),
                 fmt_laplacian(d),
                 fmt_ellipticity(d),
@@ -2799,265 +2041,168 @@ def output(
         },
     ]
 
-    # ===================================================================== #
-    # Write output file
-    # ===================================================================== #
+    # Add heavy-atom sections headers
+    heavy_headers = ["№", "Type", "X", "E", "Nu", "E···Nu (Å)", "Angle (°)", "ρ", "∇²ρ", "ε"]
+    for key, title in [("XB", "HALOGEN BONDS"), ("ChB", "CHALCOGEN BONDS"), ("PnB", "PNICTOGEN BONDS")]:
+        for section in sections:
+            if section["key"] == key:
+                section["header"] = heavy_headers
+                section["row_func"] = lambda d, i: [
+                    i + 1,
+                    f"{d.get('neighbor_symbol', '—')}-{d.get('electrophile_symbol', '—')}···{d.get('nucleophile_symbol', '—')}",
+                    atom_number(d, "neighbor_num"),
+                    atom_number(d, "electrophile_num"),
+                    atom_number(d, "nucleophile_num"),
+                    fmt_distance(d, "distance"),
+                    fmt_float(d, "angle", 1),
+                    fmt_rho(d),
+                    fmt_laplacian(d),
+                    fmt_ellipticity(d),
+                ]
 
     output_filename = f"{filename}.nci"
+    with open(output_filename, "w", encoding="utf-8") as f:
+        f.write("NCITools: Topological analysis of electron density\n")
+        f.write(f"Date: {now.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Input file: {filename}{ext}\n")
 
-    with open(
-        output_filename,
-        "w",
-        encoding="utf-8"
-    ) as f:
-
-        f.write(
-            "NCITools: Topological analysis of electron density\n"
-            f"Date: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"Input file: {filename}{ext}\n"
-        )
-
-        # ------------------------------------------------------------- #
-        # Sections
-        # ------------------------------------------------------------- #
-
-        for sec in sections:
-
-            interaction_edges = edges_by_type.get(
-                sec["key"],
-                []
-            )
-
+        for section in sections:
+            interaction_edges = edges_by_type.get(section["key"], [])
             if not interaction_edges:
                 continue
+            f.write("\n" + "=" * 120 + "\n")
+            f.write(section["title"])
+            f.write("\n" + "=" * 120 + "\n\n")
 
-            rows = [
-                sec["row_func"](
-                    edge,
-                    i
-                )
-                for i, edge in enumerate(
-                    interaction_edges
-                )
-            ]
-
-            f.write("\n")
-            f.write("=" * 120 + "\n")
-            f.write(
-                sec["title"]
-            )
-            f.write("\n")
-            f.write("=" * 120 + "\n\n")
-
-            table = tabulate(
-                rows,
-                headers=sec["header"],
-                tablefmt="github",
-                floatfmt=".3f",
-                numalign="right",
-                stralign="center",
-            )
-
+            rows = [section["row_func"](edge, i) for i, edge in enumerate(interaction_edges)]
+            from tabulate import tabulate
+            table = tabulate(rows, headers=section["header"], tablefmt="github", numalign="right", stralign="center")
             f.write(table)
             f.write("\n")
 
-        # ------------------------------------------------------------- #
-        # Footer
-        # ------------------------------------------------------------- #
-
-        WIDTH = 40
-
-        philosopher, quote = random.choice(
-            quotes
-        )
-
+        philosopher, quote = random.choice(quotes)
         f.write("\n\n")
+        f.write(textwrap.fill(quote.upper(), width=40, initial_indent=" ", subsequent_indent=" "))
+        f.write(f"\n   -- {philosopher.upper()}\n")
 
-        f.write(
-            textwrap.fill(
-                quote.upper(),
-                width=WIDTH,
-                initial_indent=" ",
-                subsequent_indent=" ",
-            )
-        )
-
-        f.write(
-            f"\n   -- {philosopher.upper()}\n"
-        )
-
-
+    return output_filename
 
 
 # ============================================================================
-#  Main script
+# 23. Main pipeline
 # ============================================================================
 
 def main(
-    cube_file,
-    output_file=None,
-    cutoff=3.0,         # in Ang!
-    rho_min=0.001,
-    rho_max=0.089,
-    nproc=4,
-):
+    cube_file: str,
+    output_file: Optional[str] = None,
+    cube_units: str = "auto",
+    bcp_search_radius: float = 5.0,
+    nproc: int = 4,
+    grad_tol: float = 1.0e-6,
+    max_iter: int = 60,
+    eig_tol: float = 1.0e-8,
+    min_bcp_angle: float = 140.0,
+    projection_margin: float = 0.20,
+    max_line_fraction: float = 0.35,
+    rho_covalent_threshold: float = 0.089,
+    covalent_scale: float = 1.25,
+    require_negative_laplacian: bool = False,
+    aromatic_mode: str = "heuristic",
+    correlation=correlation_1,
+) -> nx.Graph:
     """
-    Run the complete topological NCI analysis.
+    Run complete analysis.
 
-    Parameters
-    ----------
-    cube_file : str
-        Input Gaussian cube file containing electron density.
+    All distance-related public parameters are in Angstrom.
 
-    output_file : str or None
-        Output filename without '.nci'.
-        If None, the cube filename is used.
-
-    cutoff : float
-        Maximum atom-atom distance used for initial BCP search.
-
-    rho_min, rho_max : float
-        Density range used to classify non-covalent BCPs.
-
-    nproc : int
-        Number of processes used for BCP search.
-
-    Returns
-    -------
-    G : nx.Graph
-        Final molecular interaction graph.
+    Internally:
+        coordinates -> Bohr
+        grid vectors -> Bohr
+        distances -> Bohr
+        density derivatives -> atomic units
     """
-
-    # ===================================================================== #
-    # Input
-    # ===================================================================== #
-
     print("=" * 70)
     print("NCI TOPOLOGICAL ANALYSIS")
     print("=" * 70)
 
     print(f"\nReading electron density: {cube_file}")
-
-    origin, spacing, density, atoms = read_cube(cube_file)
-
-    print(f"Grid shape: {density.shape}")
-    print(f"Number of atoms: {len(atoms)}")
-
-    # ===================================================================== #
-    # B-spline interpolation
-    # ===================================================================== #
+    cube = read_cube(cube_file, cube_units=cube_units)
+    print(f"Detected coordinate units: {cube.coordinate_units}")
+    print(f"Grid shape: {cube.shape}")
+    print(f"Number of atoms: {len(cube.atoms)}")
+    print("Internal coordinate system: Bohr")
+    print("Grid spacing (Å): " + ", ".join(f"{x * bohr_to_angstrom:.4f}" for x in cube.spacing))
 
     print("\nBuilding B-spline interpolator...")
+    interp = BSplineAIM.from_density(cube.density, cube.origin, cube.axes)
 
-    interp = BSplineAIM.from_density(density, origin, spacing)
+    print("\nSearching for (3,-1) critical points...")
+    bcps = find_bcps_parallel(
+        interp, cube.atoms,
+        bcp_search_radius=bcp_search_radius,
+        nproc=nproc,
+        grad_tol=grad_tol,
+        max_iter=max_iter,
+        eig_tol=eig_tol,
+        min_bcp_angle=min_bcp_angle,
+        projection_margin=projection_margin,
+        max_line_fraction=max_line_fraction,
+    )
+    print(f"Unique (3,-1) BCPs found: {len(bcps)}")
 
-    # ===================================================================== #
-    # BCP search
-    # ===================================================================== #
-
-    print("\nSearching for bond critical points...")
-
-    bcps = find_bcp_parallel(interp, atoms, cutoff=cutoff, nproc=nproc)
-
-    print(f"Total BCPs found: {len(bcps)}")
-
-    # ===================================================================== #
-    # NCI filtering
-    # ===================================================================== #
-
-    bcps_nci, bcps_covalent = find_nci(bcps, rho_min=rho_min, rho_max=rho_max)
-
-    print(f"Covalent BCPs: {len(bcps_covalent)}")
-    print(f"Non-covalent BCPs: {len(bcps_nci)}")
-
-    # ===================================================================== #
-    # Build covalent molecular graph
-    # ===================================================================== #
+    bcps_nci, bcps_covalent = find_nci(
+        bcps, cube.atoms,
+        rho_threshold=rho_covalent_threshold,
+        covalent_scale=covalent_scale,
+        require_negative_laplacian=require_negative_laplacian,
+        filter_artifacts=True,
+    )
+    print(f"Covalent-like BCPs: {len(bcps_covalent)}")
+    print(f"NCI BCPs (after filtering): {len(bcps_nci)}")
 
     print("\nBuilding covalent molecular graph...")
-
-    G = build_covalent_graph(bcps_covalent, atoms)
+    G = build_covalent_graph(bcps_covalent, cube.atoms, aromatic_mode=aromatic_mode)
 
     n_atoms = sum(1 for _, data in G.nodes(data=True) if data.get("node_type") == "atom")
-    n_rings = sum(1 for _, data in G.nodes(data=True) if data.get("node_type") == "aromatic_center")
+    n_rings = sum(1 for _, data in G.nodes(data=True) if data.get("node_type") == "aromatic_center" and data.get("aromatic", False))
     n_covalent = sum(1 for _, _, data in G.edges(data=True) if data.get("bond_type") == "covalent")
-
     print(f"Atoms: {n_atoms}")
     print(f"Aromatic rings: {n_rings}")
-    print(f"Covalent bonds: {n_covalent}")
-
-    # ===================================================================== #
-    # Add all NCI interactions
-    # ===================================================================== #
+    print(f"Covalent BCP edges: {n_covalent}")
 
     print("\nSearching for non-covalent interactions...")
-
-    G = build_graph_with_nci(bcps_nci, G, atoms)
-    G = build_graph_with_carbonyl(bcps_nci, G, atoms)
-    G = build_graph_with_unclassified(bcps_nci, G, atoms)
-
-    # ===================================================================== #
-    # Summary
-    # ===================================================================== #
+    G = build_graph_with_nci(bcps_nci, G, cube.atoms)
+    G = build_graph_with_carbonyl(bcps_nci, G, cube.atoms)
+    G = build_graph_with_unclassified(bcps_nci, G, cube.atoms)
 
     print("\nDetected interactions:")
-
-
-    interaction_types = [
-        "HB",
-        "XB",
-        "ChB",
-        "PnB",
-        "stacking",
-        "T-stacking",
-        "H-pi",
-        "n-pi",
-        "carbonyl",
-        "unclassified"
-    ]
-
+    interaction_types = ["HB", "XB", "ChB", "PnB", "stacking", "T-stacking", "H-pi", "n-pi", "carbonyl", "unclassified"]
     for bond_type in interaction_types:
-
-        count = sum(
-            1
-            for _, _, data in G.edges(data=True)
-            if data.get("bond_type") == bond_type
-        )
-
+        count = sum(1 for _, _, data in G.edges(data=True) if data.get("bond_type") == bond_type)
         if count:
-            print(
-                f"  {bond_type:12s}: {count}"
-            )
-
-    # ===================================================================== #
-    # Output
-    # ===================================================================== #
+            print(f"  {bond_type:12s}: {count}")
 
     if output_file is None:
+        output_file = os.path.splitext(cube_file)[0]
+    input_ext = os.path.splitext(cube_file)[1]
+    print(f"\nWriting results to: {output_file}.nci")
+    output(G, filename=output_file, ext=input_ext, correlation=correlation)
 
-        output_file = os.path.splitext(
-            cube_file
-        )[0]
-
-    input_ext = os.path.splitext(
-        cube_file
-    )[1]
-
-    print(
-        f"\nWriting results to: {output_file}.nci"
-    )
-
-    output(
-        G,
-        filename=output_file,
-        ext=input_ext
-    )
-
-    print(
-        "\nAnalysis completed."
-    )
-
+    print("\nAnalysis completed.")
     return G
 
+
+# ============================================================================
+# 24. Script entry point
+# ============================================================================
+
 if __name__ == "__main__":
-    G = main(r"C:\Users\User\Navuka\Proteins_NCI_analysis\SCF for manual\H_optimized\GFN2-xTB\SCF\HF\1ubq_HF-pcseg-1_opt_xtb_250_grid.cube", nproc=8)
+    G = main(
+        r"C:\Users\User\PycharmProjects\NCITools\tests\data\carbonyl\carbonyl_1.cub",
+        nproc=8,
+        bcp_search_radius=3.7,
+        cube_units="auto",
+        rho_covalent_threshold=0.089,
+        covalent_scale=1.25,
+        aromatic_mode="heuristic",
+    )

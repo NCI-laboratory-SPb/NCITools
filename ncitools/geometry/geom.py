@@ -500,11 +500,11 @@ def find_nci_with_aromatic(
 def find_carbonyl_interactions(
         atoms: ase.Atoms,
         G: nx.Graph,
-        distance_cutoff: float = 3.2,
-        angle_min: float = 95.0,
-        angle_max: float = 125.0,
-        plane_angle_min: float = 70.0,
-        plane_angle_max: float = 110.0,
+        distance_cutoff: float = 3.22,
+        angle_min: float = 90.0,
+        angle_max: float = 130.0,
+        plane_angle_min: float = 50.0,
+        plane_angle_max: float = 150.0,
 ) -> nx.Graph:
     """
     Detect n→π* interactions between lone-pair donors (X=O) and
@@ -586,8 +586,8 @@ def find_carbonyl_interactions(
             if G.edges[o, n]["bond_type"] == "covalent"
         ]
 
-        if len(neighbours) != 1:
-            continue
+#        if len(neighbours) != 1:
+#            continue
 
         center = neighbours[0]
 
@@ -1032,7 +1032,7 @@ def output(
 # --------------------------------------------------------------------------- #
 def main():
     # Example usage (adjust path as needed)
-    file = r"C:\Users\User\Navuka\Proteins_NCI_analysis\SCF for manual\H_optimized\GFN2-xTB\SCF\HF\1ubq_HF-pcseg-1_opt_xtb_xyz.xyz"
+    file = r"C:\Users\User\PycharmProjects\NCITools\tests\data\carbonyl\carbonyl_4.xyz"
     basename = os.path.basename(file)
     name, ext = os.path.splitext(basename)
     _, _, _, atoms = read_input(file)
