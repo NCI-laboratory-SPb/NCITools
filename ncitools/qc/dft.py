@@ -3,9 +3,9 @@ DFT calculations with PySCF to generate electron density cube files.
 """
 
 import os
-import pyscf
-from pyscf import gto, dft, tools
-from pyscf.lib import num_threads
+#import pyscf
+#from pyscf import gto, dft, tools
+#from pyscf.lib import num_threads
 
 
 def write_cube_pyscf(pdb_file, functional='b3lyp', basis='def2-svp',

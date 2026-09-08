@@ -318,25 +318,14 @@ def find_nci_with_aromatic(
                     G.add_edge(
                         node1,
                         node2,
-                        atom_num_cycle_1=np.min(ring1['cycle']),
-                        atom_num_cycle_2=np.min(ring2['cycle']),
+                        atom_num_cycle_1=ring1['cycle'],
+                        atom_num_cycle_2=ring2['cycle'],
                         bond_type="stacking",
                         centroid_distance=float(centroid_distance),
                         offset=float(offset),
                         angle=float(angle)
                     )
 
-            # T-stacking
-            elif angle >= 80.0:
-                G.add_edge(
-                    node1,
-                    node2,
-                    atom_num_cycle_1 = np.min(ring1['cycle']),
-                    atom_num_cycle_2 = np.min(ring2['cycle']),
-                    bond_type="T-stacking",
-                    centroid_distance=float(centroid_distance),
-                    angle=float(angle)
-                )
 
     # X-H···π interactions
     hydrogen_indices = [i for i, s in enumerate(symbols) if s == "H"]
@@ -406,6 +395,7 @@ def find_nci_with_aromatic(
                 h_num=h,
                 symbol_x=x_symbol,
                 h_centroid_distance=float(h_centroid),
+                cycle = ring['cycle'],
                 angle=float(angle),
                 projection_distance=float(projection_distance)
             )
@@ -422,7 +412,7 @@ def find_nci_with_aromatic(
         # Simple lone-pair filter:
         # at least one covalent neighbour and no hypervalent atoms
         neighbours = [
-            n for n in G.adj[lp]
+            n for n in G.adj[lp] if  G.get_edge_data(lp, n).get("bond_type") == "covalent"
         ]
 
         if len(neighbours) == 0:
@@ -454,7 +444,7 @@ def find_nci_with_aromatic(
                     continue
 
             # Angle to ring plane
-            vec = donor - centre
+            vec = centre - donor
 
             angle_to_normal = np.degrees(
                 np.arccos(
@@ -471,8 +461,8 @@ def find_nci_with_aromatic(
                 angle = 180 - np.degrees(
                    np.arccos(
                         np.clip(
-                            np.dot(vec, -vec_to_n) / (np.linalg.norm(vec) * np.linalg.norm(vec_to_n)),
-                            0.0,
+                            np.dot(vec, vec_to_n) / (np.linalg.norm(vec) * np.linalg.norm(vec_to_n)),
+                            -1.0,
                             1.0
                         )
                     )
@@ -485,6 +475,7 @@ def find_nci_with_aromatic(
                         bond_type="n-pi",
                         lp_num=lp,
                         symbol_lp=lp_symbol,
+                        cycle=ring['cycle'],
                         lp_centroid_distance=float(distance),
                         angle=float(angle)
                     )
@@ -722,6 +713,11 @@ def output(
 
     now = datetime.now()
 
+    def cycle_numbers_to_string(arr):
+        arr = np.array(arr) + 1
+        string = ','.join(map(str, arr))
+        return string
+
     # ------------------------------------------------------------------
     # Group edges by interaction type
     # ------------------------------------------------------------------
@@ -861,44 +857,21 @@ def output(
 
         {
             "key": "stacking",
-            "title": "π-π STACKING",
+            "title": "PARALLEL STACKING",
             "header": [
                 "№",
-                "Type",
-                "Atom of Ring 1",
-                "Atom of Ring 2",
+                "Ring 1",
+                "Ring 2",
                 "Centroid (Å)",
                 "Offset (Å)",
                 "Angle (°)",
             ],
             "row_func": lambda d, i: [
                 i + 1,
-                "parallel",
-                int(d["atom_num_cycle_1"]) + 1,
-                int(d["atom_num_cycle_2"]) + 1,
+                cycle_numbers_to_string(d["atom_num_cycle_1"]),
+                cycle_numbers_to_string(d["atom_num_cycle_2"]),
                 round(d["centroid_distance"], 3),
                 round(d["offset"], 3),
-                round(d["angle"], 1),
-            ],
-        },
-
-        {
-            "key": "T-stacking",
-            "title": "T-SHAPED STACKING",
-            "header": [
-                "№",
-                "Type",
-                "Atom of Ring 1",
-                "Atom of Ring 2",
-                "Centroid (Å)",
-                "Angle (°)",
-            ],
-            "row_func": lambda d, i: [
-                i + 1,
-                "T-shaped",
-                int(d["atom_num_cycle_1"]) + 1,
-                int(d["atom_num_cycle_2"]) + 1,
-                round(d["centroid_distance"], 3),
                 round(d["angle"], 1),
             ],
         },
@@ -911,6 +884,7 @@ def output(
                 "Type",
                 "X",
                 "H",
+                "Ring",
                 "H···π (Å)",
                 "Angle (°)",
                 "Projection (Å)",
@@ -920,6 +894,7 @@ def output(
                 f"{d['symbol_x']}-H···π",
                 int(d["x_num"]) + 1,
                 int(d["h_num"]) + 1,
+                cycle_numbers_to_string(d['cycle']),
                 round(d["h_centroid_distance"], 3),
                 round(d["angle"], 1),
                 round(d["projection_distance"], 3),
@@ -933,6 +908,7 @@ def output(
                 "№",
                 "Type",
                 "Atom",
+                "Ring",
                 "Distance (Å)",
                 "Angle (°)",
             ],
@@ -940,6 +916,7 @@ def output(
                 i + 1,
                 f"{d['symbol_lp']}···π",
                 int(d["lp_num"]) + 1,
+                cycle_numbers_to_string(d['cycle']),
                 round(d["lp_centroid_distance"], 3),
                 round(d["angle"], 1),
             ],
@@ -1032,7 +1009,7 @@ def output(
 # --------------------------------------------------------------------------- #
 def main():
     # Example usage (adjust path as needed)
-    file = r"C:\Users\User\PycharmProjects\NCITools\tests\data\carbonyl\carbonyl_4.xyz"
+    file = r"C:\Users\User\Navuka\NCITools\tests\XB_PnB_ChB_pi_carbonyl\pi_2.xyz"
     basename = os.path.basename(file)
     name, ext = os.path.splitext(basename)
     _, _, _, atoms = read_input(file)

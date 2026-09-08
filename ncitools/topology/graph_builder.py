@@ -303,6 +303,7 @@ def _nearest_aromatic_ring(
     aromatic, rings = _aromatic_membership(G, atom_idx)
     if not aromatic:
         return None
+
     return min(
         rings,
         key=lambda ring: norm(np.asarray(position) - np.asarray(G.nodes[ring]["position"]))
@@ -382,26 +383,10 @@ def _classify_aromatic_nci(
                 return None
             attrs = {
                 "bond_type": "stacking",
-                "ring_1": ring1,
-                "ring_2": ring2,
-                "atom_num_cycle_1": int(min(G.nodes[ring1]["cycle"])),
-                "atom_num_cycle_2": int(min(G.nodes[ring2]["cycle"])),
+                "ring_1": G.nodes[ring1]["cycle"],
+                "ring_2": G.nodes[ring2]["cycle"],
                 "centroid_distance": float(centroid_distance),
                 "offset": float(offset),
-                "angle": float(ring_angle),
-            }
-            attrs.update(_bcp_properties(bcp))
-            return {"u": ring1, "v": ring2, "attrs": attrs}
-
-        # T stacking
-        if ring_angle >= 80.0:
-            attrs = {
-                "bond_type": "T-stacking",
-                "ring_1": ring1,
-                "ring_2": ring2,
-                "atom_num_cycle_1": int(min(G.nodes[ring1]["cycle"])),
-                "atom_num_cycle_2": int(min(G.nodes[ring2]["cycle"])),
-                "centroid_distance": float(centroid_distance),
                 "angle": float(ring_angle),
             }
             attrs.update(_bcp_properties(bcp))
@@ -460,8 +445,7 @@ def _classify_aromatic_nci(
             "x_num": int(x_idx),
             "h_num": int(h_idx),
             "symbol_x": x_symbol,
-            "ring": ring,
-            "atom_num_cycle": int(min(G.nodes[ring]["cycle"])),
+            "ring": G.nodes[ring]["cycle"],
             "h_centroid_distance": float(H_centroid_distance),
             "projection_distance": float(projection_distance),
             "angle": float(angle),
@@ -511,14 +495,17 @@ def _classify_aromatic_nci(
         "bond_type": "n-pi",
         "lp_num": int(lp_idx),
         "symbol_lp": other_symbol,
-        "ring": ring,
-        "atom_num_cycle": int(min(G.nodes[ring]["cycle"])),
+        "ring": G.nodes[ring]["cycle"],
         "lp_centroid_distance": float(distance),
         "angle_to_normal": float(angle_to_normal),
         "angle": float(best_angle),
         "lp_neighbour_num": int(best_neighbour),
     }
     attrs.update(_bcp_properties(bcp))
+    print('centre', centre)
+    print('donor', donor)
+    print('neigh', coordinates[neighbour_idx])
+
     return {"u": lp_idx, "v": ring, "attrs": attrs}
 
 

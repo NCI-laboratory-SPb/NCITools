@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import random
 import textwrap
+import numpy as np
 from datetime import datetime
 from typing import Optional, List, Dict
 
@@ -72,6 +73,11 @@ def output(
     def fmt_ellipticity(data: Dict) -> str:
         return fmt_float(data, "ellipticity", 3)
 
+    def cycle_numbers_to_string(arr) -> str:
+        arr = np.array(arr) + 1
+        string = ','.join(map(str, arr))
+        return string
+
     sections = [
         {
             "key": "HB",
@@ -102,29 +108,18 @@ def output(
         {"key": "PnB", "title": "PNICTOGEN BONDS"},
         {
             "key": "stacking",
-            "title": "π-π STACKING",
-            "header": ["№", "Type", "Ring 1", "Ring 2", "Centroid (Å)", "Offset (Å)", "Angle (°)"],
+            "title": "PARALLEL STACKING",
+            "header": ["№", "Ring 1", "Ring 2", "Centroid (Å)", "Offset (Å)", "Angle (°)"],
             "row_func": lambda d, i: [
-                i + 1, "parallel",
-                atom_number(d, "atom_num_cycle_1"),
-                atom_number(d, "atom_num_cycle_2"),
+                i + 1,
+                cycle_numbers_to_string(d['ring_1']),
+                cycle_numbers_to_string(d['ring_2']),
                 fmt_distance(d, "centroid_distance"),
                 fmt_distance(d, "offset"),
                 fmt_float(d, "angle", 1),
             ],
         },
-        {
-            "key": "T-stacking",
-            "title": "T-SHAPED STACKING",
-            "header": ["№", "Type", "Ring 1", "Ring 2", "Centroid (Å)", "Angle (°)"],
-            "row_func": lambda d, i: [
-                i + 1, "T-shaped",
-                atom_number(d, "atom_num_cycle_1"),
-                atom_number(d, "atom_num_cycle_2"),
-                fmt_distance(d, "centroid_distance"),
-                fmt_float(d, "angle", 1),
-            ],
-        },
+
         {
             "key": "H-pi",
             "title": "X-H···π INTERACTIONS",
@@ -134,7 +129,7 @@ def output(
                 f"{d['symbol_x']}-H···π",
                 atom_number(d, "x_num"),
                 atom_number(d, "h_num"),
-                atom_number(d, "atom_num_cycle"),
+                cycle_numbers_to_string(d['ring']),
                 fmt_distance(d, "h_centroid_distance"),
                 fmt_float(d, "angle", 1),
                 fmt_distance(d, "projection_distance"),
@@ -148,7 +143,7 @@ def output(
                 i + 1,
                 f"{d['symbol_lp']}···π",
                 atom_number(d, "lp_num"),
-                atom_number(d, "atom_num_cycle"),
+                cycle_numbers_to_string(d['ring']),
                 fmt_distance(d, "lp_centroid_distance"),
                 fmt_float(d, "angle", 1),
             ],
@@ -336,7 +331,7 @@ def main(
 
 if __name__ == "__main__":
     G = main(
-        r"C:\Users\User\PycharmProjects\NCITools\tests\data\carbonyl\carbonyl_1.cub",
+        r"C:\Users\User\PycharmProjects\NCITools\tests\data\stacking\pi_2.cub",
         nproc=8,
         bcp_search_radius=3.7,
         cube_units="auto",
