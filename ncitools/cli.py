@@ -28,10 +28,10 @@ from ncitools.topology.graph_builder import (
     build_graph_with_unclassified,
     build_graph_with_nci
 )
-from .topology.cli import  output as top_output
-from .qc.dft import write_cube_pyscf
-from .io.fixers import fix_structure, optimize_hydrogens
-from .io.writers import pdb2xyz
+from ncitools.topology.cli import  output as top_output
+from ncitools.qc.dft import write_cube_pyscf
+from ncitools.io.fixers import fix_structure, optimize_hydrogens
+from ncitools.io.writers import pdb2xyz
 
 
 # ----------------------------------------------------------------------
