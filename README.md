@@ -1,168 +1,212 @@
-# NCITools – Non‑Covalent Interaction Analysis
+# NCITools — Non-Covalent Interaction Analysis
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
 
-**NCITools** is a Python package that automates the detection and energy estimation of non‑covalent interactions (especially hydrogen bonds) from molecular structures. It provides two complementary approaches:
+**NCITools** is a Python package for the automatic detection of
+non-covalent interactions (NCIs) from molecular structures.  The current
+release focuses on a **geometry-based** approach: all interactions are
+inferred from atomic coordinates and covalent connectivity alone, without
+any quantum-chemical input.
 
-1. **Geometry‑based analysis** – uses only atomic coordinates (distances and angles) to identify hydrogen bonds.  
-2. **Topology‑based analysis** – uses the electron density (from a `.cube` file) to locate bond critical points (BCPs) and characterise non‑covalent interactions (NCI) according to the quantum theory of atoms in molecules (QTAIM).
-
-The package also includes utilities to prepare PDB files (add missing hydrogens, fix residues) and to generate electron density cube files via PySCF.
+A future release will add a complementary **topology-based** approach
+using QTAIM bond critical points from electron-density cube files.
 
 ---
 
-## Key Features
+## Key features (geometry-based)
 
-- **Hydrogen bond detection from geometry**  
-  - Covalent bonds identified using covalent radii.  
-  - H‑bonds found when H···A distance ≤ sum of van der Waals radii **and** D–H···A angle ≥ threshold (default 120°).  
-  - Energy estimation using empirical correlations (Rozenberg 2000, etc.).  
-  - *Requires explicit hydrogen atoms in the input structure.*
+For every structure NCITools detects:
 
-- **Topological (AIM/NCI) analysis**  
-  - Reads Gaussian‑format cube files (electron density).  
-  - Interpolates density with cubic B‑splines for analytical derivatives.  
-  - Parallel search for bond critical points (BCPs) using Newton’s method.  
-  - Filters BCPs by electron density to isolate non‑covalent interactions.  
-  - Assigns contact types (e.g., `O-H...O`, `C-H...N`) and computes interaction energies using multiple published correlations.
+- hydrogen bonds (D–H···A)
+- halogen bonds (D–X···A, X = F, Cl, Br, I)
+- chalcogen bonds (X = S, Se, Te)
+- pnictogen bonds (X = P, As, Sb, Bi)
+- tetrel bonds (X = Si, Ge, Sn, Pb)
+- π···π stacking between aromatic rings
+- X–H···π contacts
+- lone-pair···π (n···π) contacts
+- ion···π contacts
+- metallophilic-like contacts (Au, Ag, Cu, Hg, Ir, Pt, Pd, Ni)
+- carbonyl n→π* contacts (Bürgi–Dunitz geometry)
 
-- **PDB preparation and fixing**  
-  - Add missing residues/atoms and hydrogens (using PDBFixer).  
-  - Optimise only hydrogen positions with GFN2‑xTB (via ASE and xTB).
+Each contact is scored by a **soft (fuzzy) confidence value** in
+`[0, 1]`, obtained as the product of smooth geometric criteria
+(distance, two angles).  A contact is reported only if its score
+exceeds a user-supplied threshold.
 
-- **Electron density cube generation**  
-  - Run DFT calculations with PySCF (B3LYP, wB97X‑D3, etc.) and write `.cube` files for later topological analysis.
+Aromatic rings are identified by combining
 
-- **Command‑line interface (CLI)**  
-  - Easy‑to‑use subcommands: `geom`, `top`, `cube`, `fix`, `convert`.
+1. cycle detection on the covalent graph,
+2. an RMS planarity test on the ring atoms, and
+3. a HOMA aromaticity index above a threshold.
+
+Interaction energies are estimated with published empirical
+correlations (Rozenberg, Espinosa, etc.); the correlations live in
+`ncitools/correlations.py`.
 
 ---
 
 ## Installation
 
-NCITools requires **Python ≥ 3.8**. It is recommended to use a virtual environment.
+NCITools requires **Python ≥ 3.9**.
 
 ```bash
-# Clone the repository (or download the source)
-git clone https://github.com/yourusername/ncitools.git
+git clone https://github.com/NCI-laboratory-SPb/NCITools.git
 cd ncitools
 
-# Create and activate a virtual environment (optional but recommended)
 python -m venv venv
-source venv/bin/activate   # Linux/macOS
-# or .\venv\Scripts\activate (Windows)
+source venv/bin/activate    # Linux/macOS
+# or .\venv\Scripts\activate  (Windows)
 
-# Install the package in editable mode
 pip install -e .
 ```
 
-Optional dependencies for specific features (DFT, PDB fixing, xTB optimisation) can be installed with:
+For development (tests, linting):
 
 ```bash
-pip install -e .[all]   # install everything
-# or individually:
-pip install -e .[dft]   # only PySCF
-pip install -e .[fix]   # only PDBFixer + OpenMM
-pip install -e .[xtb]   # only xTB
-```
-
-After installation the command `ncitools` will be available in your terminal.
-
----
-
-## Quick Examples
-
-### 1. Geometry‑based hydrogen bond detection
-
-```bash
-ncitools geom my_structure.pdb --angle-tol 120 -o output
-```
-
-Output is written to `output.nci` with a human‑readable table.
-
-### 2. Generate electron density cube from a PDB file
-
-```bash
-ncitools cube complex.pdb --functional b3lyp --basis def2-svp --ncores 8
-```
-
-Creates `complex.cube`.
-
-### 3. Topological NCI analysis from cube file
-
-```bash
-ncitools top complex.cube --rho-min 0.002 --cutoff 4.0 --nproc 8
-```
-
-Produces a detailed `.nci` file containing BCP coordinates, density, Laplacian, eigenvalues, ellipticity, and estimated interaction energies.
-
-### 4. Fix a PDB, add hydrogens, and optimise them
-
-```bash
-ncitools fix raw.pdb --add-h --ph 7.4 -o fixed.pdb
-ncitools fix fixed.pdb --optimize-h --charge 0 -o opt.xyz
-```
-
-### 5. Convert PDB to XYZ
-
-```bash
-ncitools convert protein.pdb --to xyz
+pip install -e ".[dev]"
 ```
 
 ---
 
-## Output Format (`.nci` file)
+## Quick start
 
-For geometry‑based analysis, the output table includes:
+### Command line
 
-| # | Type NCI | D‑H (Å) | H···A (Å) | D···A (Å) | DHA (°) | Energy (kcal/mol) |
-|---|----------|---------|-----------|-----------|---------|-------------------|
+```bash
+ncitools geom my_structure.xyz
+```
 
-For topological analysis, the output includes:
+This writes a human-readable report to `my_structure.nci` and prints a
+per-family summary to the terminal:
 
-| BCP | Type | X (Å) | Y (Å) | Z (Å) | ρ (e/bohr³) | ∇²ρ (e/bohr⁵) | λ1 | λ2 | λ3 | ε | Energy (kcal/mol) |
-|-----|------|-------|-------|-------|-------------|---------------|----|----|----|---|------------------|
+```
+Loaded 24 atoms from my_structure.xyz
+  covalent bonds: 24
+  aromatic rings: 1
+
+Detected interactions:
+  Hydrogen bonds         3
+  π···π stacking         1
+  X–H···π                2
+
+Report written to my_structure.nci
+```
+
+Useful options:
+
+```bash
+ncitools geom complex.pdb \
+    --angle-tol 120 \
+    --confidence 0.8 \
+    --radii bondi \
+    -o complex_analysis
+```
+
+`ncitools geom --help` lists everything.
+
+### Python API
+
+```python
+from ase.io import read
+from ncitools.geometry import (
+    build_graph_with_covalent_pairs,
+    find_nci_bonds,
+    find_nci_with_aromatic,
+    output,
+)
+
+atoms = read("complex.xyz")
+
+G = build_graph_with_covalent_pairs(atoms)
+G = find_nci_bonds(atoms, G, ["H"], 110.0, "HB")
+G = find_nci_with_aromatic(atoms, G)
+
+output(G, filename="complex", ext=".xyz")
+```
 
 ---
 
-## Current Limitations
+## Output format
 
-The following limitations are known and will be addressed in future versions:
+The `.nci` file is plain text with one table per interaction family.
+Columns depend on the family; a hydrogen-bond table looks like this:
 
-- **Geometry‑based analysis** detects only **hydrogen bonds**. Other NCI types (π‑stacking, halogen bonds, etc.) are not identified.
-- **Topological analysis** does **not** unambiguously assign the physical nature of a non‑covalent contact. For example, an `N···O` contact could be a chalcogen bond, a pnictogen bond, or a fortuitous interaction. **Manual verification is required** for such contacts.
-- **No XYZ → PDB converter** is implemented yet (only PDB → XYZ).
-- **Deuterium atoms (`D`)** are **not recognised** in PDB files. Deuterium should be renamed to `H` or removed before use.
-- **Hydrogen position optimisation** (without fixing heavy atoms) is **not yet integrated** into the CLI (only available via the `fix` subcommand with `--optimize-h`).
-- **Automatic determination of molecular charge and spin multiplicity** is **not implemented**. The user must provide these values for DFT calculations.
+```
+| № | Type     | Confidence score | D | H | A | D-H (Å) | H···A (Å) | D···A (Å) | Angle DHA (°) | Angle RAH (°) | Energy (kcal/mol) |
+|---|----------|------------------|---|---|---|---------|-----------|-----------|---------------|---------------|-------------------|
+| 1 | O-H···O  | 0.94             | 1 | 2 | 6 | 0.970   | 1.812     | 2.771     | 170.2         | 118.5         | -4.8              |
+```
 
 ---
 
-## Dependencies
+## Package layout
 
-Core dependencies (automatically installed):
-- `numpy`, `scipy`, `ase`, `networkx`, `tqdm`, `click`
+```
+ncitools/
+├── cli.py                    # click-based command line interface
+├── constants.py              # radii, HOMA parameters, element sets
+├── utils.py                  # input readers
+├── quotes.py                 # signature quotes for the report
+├── correlations.py           # empirical geometry → energy correlations
+└── geometry/
+    ├── soft.py               # smooth (fuzzy) threshold functions
+    ├── geom.py               # HOMA, best-fit planes, planarity metrics
+    ├── graph_builder.py      # molecular graph from coordinates
+    ├── output.py             # formatted .nci report writer
+    └── detectors/
+        ├── _common.py        # shared acceptor-angle rules
+        ├── sigma_hole.py     # HB, XB, ChB, PnB, TetB
+        ├── aromatic.py       # π···π, H···π, n···π, ion···π
+        ├── carbonyl.py       # n→π* with carbonyls
+        └── metallophilic.py  # metal···metal contacts
+```
 
-Optional (for specific subcommands):
-- `pyscf` – for `cube` subcommand
-- `pdbfixer`, `openmm` – for `fix` subcommand
-- `xtb-python` – for hydrogen optimisation in `fix --optimize-h`
+---
+
+## Roadmap
+
+Not yet in this release — planned for the next ones:
+
+- **Topology-based analysis** (QTAIM) from electron-density cube files.
+- **Quantum-chemical helpers**: DFT cube generation with PySCF.
+- **Structure preparation**: PDB fixing, hydrogen addition, xTB calculator
+- **Format conversion** utilities.
+
+The code paths for these modules exist in the repository but are not
+shipped in the first release.
+
+---
+
+## Known limitations
+
+- **Hydrogen atoms must be explicit** in the input structure for
+  hydrogen-bond detection.
+- **Deuterium (`D`) is not recognised**; rename it to `H` before use.
+- The detector reports geometric contacts, not chemical truths.  A
+  short N···O contact may be a chalcogen bond, a pnictogen bond, or an
+  artefact — **manual verification of borderline cases is expected**.
 
 ---
 
 ## Contributing
 
-Bug reports, feature requests, and pull requests are welcome. Please open an issue on GitHub before submitting major changes.
+Bug reports, feature requests and pull requests are welcome.  Please
+open an issue before submitting a large change.
 
 ---
 
 ## License
 
-Distributed under the MIT License. See `LICENSE` for more information.
+Distributed under the MIT License — see [LICENSE](LICENSE).
 
 ---
 
 ## Citation
 
-If you use NCITools in scientific work, please cite the original methodological papers (see the docstrings in `correlations.py` for each correlation). A dedicated Zenodo DOI will be added after the first stable release.
-```
+If you use NCITools in scientific work, please cite the original
+methodological papers; each empirical correlation is documented in the
+docstring of `ncitools/correlations.py`.  A Zenodo DOI will be added
+after the first stable release.
+

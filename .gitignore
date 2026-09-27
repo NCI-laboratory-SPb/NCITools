@@ -5,6 +5,7 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 ENV/
 build/
 dist/
@@ -16,3 +17,25 @@ dist/
 .idea/
 *.swp
 
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# NCITools artefacts
+*.nci
+
+# Not shipped in the first release
+ncitools/topology/
+ncitools/io/
+ncitools/qc/
+ncitools/old/
+ncitools/geometry/geom_old.py

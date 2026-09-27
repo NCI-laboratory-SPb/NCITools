@@ -5,29 +5,60 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ncitools"
 version = "0.1.0"
-description = "Non-covalent interaction analysis (H-bonds) from geometry or electron density"
-authors = [{ name = "Your Name", email = "you@example.com" }]
-license = { text = "MIT" }
+description = "NCITools — geometry-based detection of non-covalent interactions"
 readme = "README.md"
-requires-python = ">=3.8"
+authors = [
+    { name = "Mark Kaplanskiy", email = "mark2402@mail.ru" },
+]
+license = { text = "MIT" }
+requires-python = ">=3.9"
+keywords = [
+    "chemistry",
+    "non-covalent interactions",
+    "hydrogen bond",
+    "halogen bond",
+    "aromatic stacking",
+    "computational chemistry",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
 dependencies = [
-    "numpy",
-    "scipy",
-    "ase",
-    "networkx",
-    "tqdm",
-    "click"
+    "numpy>=1.21",
+    "scipy>=1.7",
+    "networkx>=2.6",
+    "ase>=3.22",
+    "click>=8.0",
+    "tqdm>=4.60",
+    "tabulate>=0.9",
 ]
 
 [project.optional-dependencies]
-dft = ["pyscf"]
-xtb = ["xtb-python"]
-fix = ["pdbfixer", "openmm"]
-all = ["pyscf", "xtb-python", "pdbfixer", "openmm"]
-
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
 [project.scripts]
 ncitools = "ncitools.cli:cli"
 
+[project.urls]
+Homepage   = "https://github.com/NCI-laboratory-SPb"
+Repository = "https://github.com/NCI-laboratory-SPb/NCITools"
+Issues     = "https://github.com/NCI-laboratory-SPb/NCITools/issues"
+
 [tool.setuptools.packages.find]
-where = ["."]
 include = ["ncitools*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q"
