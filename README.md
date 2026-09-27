@@ -19,7 +19,7 @@ using QTAIM bond critical points from electron-density cube files.
 For every structure NCITools detects:
 
 - hydrogen bonds (D–H···A)
-- halogen bonds (D–X···A, X = F, Cl, Br, I)
+- halogen bonds (D–X···A, X = Cl, Br, I)
 - chalcogen bonds (X = S, Se, Te)
 - pnictogen bonds (X = P, As, Sb, Bi)
 - tetrel bonds (X = Si, Ge, Sn, Pb)
@@ -136,7 +136,7 @@ Columns depend on the family; a hydrogen-bond table looks like this:
 ```
 | № | Type     | Confidence score | D | H | A | D-H (Å) | H···A (Å) | D···A (Å) | Angle DHA (°) | Angle RAH (°) | Energy (kcal/mol) |
 |---|----------|------------------|---|---|---|---------|-----------|-----------|---------------|---------------|-------------------|
-| 1 | O-H···O  | 0.94             | 1 | 2 | 6 | 0.970   | 1.812     | 2.771     | 170.2         | 118.5         | -4.8              |
+| 1 | O-H···O  | 0.94             | 1 | 2 | 6 | 0.970   | 1.812     | 2.771     | 170.2         | 118.5         |  4.8              |
 ```
 
 ---
