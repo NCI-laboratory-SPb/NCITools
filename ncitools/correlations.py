@@ -222,7 +222,7 @@ def universal_1_sb(r, contact_type):
                           'SbF', 'SbCl', 'SbBr', 'SbI'):
         return np.maximum(0, pnb_1(r, contact_type))
     else:
-        return 0.
+        return 0
         
         
      

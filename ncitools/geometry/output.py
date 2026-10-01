@@ -318,6 +318,7 @@ def _write_header(f, filename: str, ext: str) -> None:
     now = datetime.now()
     f.write(
         "NCITools: Geometry based analysis\n"
+        "Authors: Kaplanskiy M.V., Tupikina E.Yu., Sutkin V.S., Rudenko V.A.\n"
         f"Date: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
         f"Input file: {filename}{ext}\n"
     )
@@ -333,7 +334,7 @@ def _write_section(f, section: Section, rows: list) -> None:
         rows,
         headers=section.header,
         tablefmt="github",
-        floatfmt=".3f",
+    #    floatfmt=".3f",
         numalign="right",
         stralign="center",
     )

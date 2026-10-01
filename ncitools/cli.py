@@ -21,7 +21,7 @@ from pathlib import Path
 import click
 from ase.io import read
 
-from ncitools.constants import BONDI, RADII
+from ncitools.constants import BONDI, RADII, CHARRY_TKATCHENKO
 from ncitools.geometry import (
     build_graph_with_covalent_pairs,
     find_carbonyl_interactions,

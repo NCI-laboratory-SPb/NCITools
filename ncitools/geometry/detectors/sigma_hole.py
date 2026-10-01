@@ -126,6 +126,7 @@ def find_nci_bonds(
                 )
 
                 total = score_dist * score_angle_dxa * score_angle_xay
+
                 if total < confidence_threshold:
                     continue
 

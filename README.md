@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.png" alt="Logo" width="200">
+</p>
+
 # NCITools — Non-Covalent Interaction Analysis
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -33,7 +37,7 @@ For every structure NCITools detects:
 Each contact is scored by a **soft (fuzzy) confidence value** in
 `[0, 1]`, obtained as the product of smooth geometric criteria
 (distance, two angles).  A contact is reported only if its score
-exceeds a user-supplied threshold.
+exceeds a user-supplied threshold. Default is 0.75.
 
 Aromatic rings are identified by combining
 
@@ -43,7 +47,16 @@ Aromatic rings are identified by combining
 
 Interaction energies are estimated with published empirical
 correlations (Rozenberg, Espinosa, etc.); the correlations live in
-`ncitools/correlations.py`.
+`ncitools/correlations.py`. At present, correlations are available 
+only for some types of non-covalent interactions, such as:
+- Hydrogen bonds: OHO, OHN, NHO, CHO, CHN, NHN. 
+Default correlation of Wendler [J. Phys. Chem. A, 2010, 114(35), 9529-9536.] is used for other types of hydrogen 
+bonds.
+- Halogen bonds (X = Cl, Br, I): X-N, X-O.
+- Chalcogen bonds (Ch = S, Se, Te): Ch-F, Ch-Cl, Ch-Br, Ch-I.
+- Pnictogen bonds (Pn = P, Sb): Pn-F, Pn-Cl, Pn-Br, Pn-I.
+
+For other types of non-covalent interactions energy estimation is currently unavailable.
 
 ---
 
@@ -52,9 +65,12 @@ correlations (Rozenberg, Espinosa, etc.); the correlations live in
 NCITools requires **Python ≥ 3.9**.
 
 ```bash
+# pip install git
 git clone https://github.com/NCI-laboratory-SPb/NCITools.git
-cd ncitools
+# or you can download an archive from GitHub manually and unpack it
+cd NCITools
 
+# we recommend to create a new environment for safe isolation of ncitools
 python -m venv venv
 source venv/bin/activate    # Linux/macOS
 # or .\venv\Scripts\activate  (Windows)
@@ -139,6 +155,9 @@ Columns depend on the family; a hydrogen-bond table looks like this:
 | 1 | O-H···O  | 0.94             | 1 | 2 | 6 | 0.970   | 1.812     | 2.771     | 170.2         | 118.5         |  4.8              |
 ```
 
+D, H(X) and A – are atomic numbers of D-H(X)···A contact. R is an atom covalently/coordinationaly bonded to acceptor atom A. 
+Columns for other families can be interpreted in the same fashion.  
+
 ---
 
 ## Package layout
@@ -179,14 +198,23 @@ shipped in the first release.
 
 ---
 
-## Known limitations
+## Disclaimer
+
+The detector reports geometric patterns, not **chemical truths**.  A
+short N···O contact may be a chalcogen bond, a pnictogen bond, or an
+ artefact — **manual verification of borderline cases is expected**.
+
+---
+
+## Limitations
 
 - **Hydrogen atoms must be explicit** in the input structure for
   hydrogen-bond detection.
 - **Deuterium (`D`) is not recognised**; rename it to `H` before use.
-- The detector reports geometric contacts, not chemical truths.  A
-  short N···O contact may be a chalcogen bond, a pnictogen bond, or an
-  artefact — **manual verification of borderline cases is expected**.
+- All coordinates are assumed to be in **Ångströms (Å)**.
+- Input reading stability is extensively tested on **xyz**-files. Other types like
+gaussian log/out, mol/mol2 and cif are also available through ase.io.read function.
+Protein databank files are available through ase.io.proteindatabank.read_proteindatabank function.
 
 ---
 
