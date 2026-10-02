@@ -419,6 +419,11 @@ quotes = [
     ("John Steinbeck", "I wonder why progress looks so much like destruction."),
     ("John Steinbeck", "Man has a choice and it's a choice that makes him a man."),
 
-    ("Elena Tupikina", "That’s why I’m a physicist rather than a chemist"),
+    ("Elena Tupikina", "That’s why I’m a physicist rather than a chemist."),
+    ("Elena Tupikina", "Fine."),
+    ("Elena Tupikina", "[Profanity]"),
+    ("Elena Tupikina", "We need to do something about this."),
+    ("Elena Tupikina", "Report information."),
+    ("Elena Tupikina", "Burn a girl? Suck it up."),
 
 ]

@@ -340,7 +340,7 @@ def _check_hydrogen_connectivity(atoms: Atoms, G: nx.Graph) -> None:
         )
         if count != 1:
             print(
-                "WARNING: At least one hydrogen atom has a number of "
+                f"WARNING: hydrogen atom {atom_idx + 1} has a number of "
                 "covalent and/or coordination neighbours different from 1."
             )
-            return
+    return

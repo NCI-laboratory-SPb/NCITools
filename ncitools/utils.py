@@ -21,32 +21,6 @@ def read_input(file):
         in_file = read(file)
         return filename, ext, abs_dir, in_file
 
-#Delete in future versions due to ASE module
-def angle(atom1, atom2, atom3):
-    """Angle (degrees) between three points (each as [x,y,z])."""
-
-    v1 = np.array(atom1) - np.array(atom2)
-    v2 = np.array(atom3) - np.array(atom2)
-    ang = np.arccos(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))) * 180 / np.pi
-    return ang
-
-#Delete in future versions due to ASE module
-def distance(atom1, atom2):
-    """Euclidean distance between two points."""
-
-    dist = np.linalg.norm(np.array(atom1) - np.array(atom2))
-    return dist
-
-# Delete in future versions due to correlations.py module
-def hb_energy(hb):
-    """Compute H‑bond energy from distance using Rozenberg 2000.
-    hb dict must contain 'dist_HA' (Å) and 'Type' (e.g. 'NHO').
-    """
-    if 'NHO' in hb['Type'] or 'OHO' in hb['Type']:
-        energy = 0.134 * (hb['dist_HA'] / 10) ** -3.05 / 4.184
-    else:
-        energy = 0
-    return energy
 
 def get_symbol(z):
     """Return element symbol for atomic number Z (common elements)."""

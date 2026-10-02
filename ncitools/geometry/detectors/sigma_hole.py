@@ -92,12 +92,13 @@ def find_nci_bonds(
         x_el = symbols[x]
 
         for d in list(G.adj[x]):
-            if isinstance(d, str):
+            d_el = symbols[d]
+
+            if isinstance(d, str) or d_el == 'H':
                 continue
             if G.edges[x, d]["bond_type"] not in ("covalent", "coordination"):
                 continue
 
-            d_el = symbols[d]
 
             # Sort acceptors by distance from X so we can stop early.
             distances = atoms.get_distances(x, acceptor_indices, mic=True)
