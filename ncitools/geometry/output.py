@@ -160,6 +160,7 @@ def _sigma_hole_section(
     interaction energy in kcal/mol.
     """
     def row_func(d, i):
+        energy = correlation(d)
         return [
             i + 1,
             f"{d['symbol_d']}-{d['symbol_x']}···{d['symbol_a']}",
@@ -172,7 +173,7 @@ def _sigma_hole_section(
             round(d["length_da"], 3),
             round(d["angle"], 1),
             "—" if d["angle_xay"] is None else round(d["angle_xay"], 1),
-            round(float(correlation(d)), 1),
+            "—" if energy == 0 else round(float(energy), 1),
         ]
 
     return Section(key, title, _SIGMA_HOLE_HEADER, row_func)
