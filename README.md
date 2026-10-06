@@ -260,4 +260,4 @@ Distributed under the MIT License — see [LICENSE](LICENSE).
 
 If you use NCITools in scientific work, please cite the original 
 methodological papers; each empirical correlation is documented in the docstring 
-of `ncitools/correlations.py`. A Zenodo DOI will be added after the first stable release.
+of `ncitools/correlations.py`. A Zenodo URL: https://doi.org/10.5281/zenodo.23194421.
