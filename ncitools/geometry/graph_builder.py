@@ -295,7 +295,7 @@ def _assign_coordination_numbers(
         num_neighbours = _count_covalent_neighbours(G, atom_idx)
 
         if symbols[atom_idx] in pnictogens and num_neighbours == 3:
-            if _is_planar_centre(atoms, G, atom_idx, tolerance=0.1):
+            if _is_planar_centre(atoms, G, atom_idx, tolerance=0.15):
                 num_neighbours += 1
 
         G.nodes[atom_idx]["num_neighbours"] = num_neighbours
@@ -321,6 +321,9 @@ def _is_planar_centre(
     center = (p1 + p2 + p3) / 3
 
     distance = np.linalg.norm(center - n_pos)
+
+    if atom_idx == 57:
+        print(distance)
 
     return distance <= tolerance
 
