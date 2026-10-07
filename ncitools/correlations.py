@@ -3,7 +3,7 @@ Energy estimation correlations from geometry.
 All functions return energy in kcal/mol.
 """
 import numpy as np
-from ncitools.constants import bohr_to_angstrom
+from ncitools.constants import BOHR_TO_ANGSTROM
 
 ##################
 # HYDROGEN BONDS #
@@ -248,7 +248,7 @@ def Mata_ED_2011(rho):
     Mata et al., Chem. Phys. Lett. 2011; returns kcal/mol.
     """
 
-    energy = 186 * (rho / bohr_to_angstrom ** 3) - 2.3
+    energy = 186 * (rho / BOHR_TO_ANGSTROM ** 3) - 2.3
     return energy / 4.184
 
 def Mata_LaplED_2011(laplacian):
@@ -256,7 +256,7 @@ def Mata_LaplED_2011(laplacian):
     returns kcal/mol.
     """
 
-    energy = 2.52 * (laplacian / bohr_to_angstrom ** 5) ** 2 + 5.2
+    energy = 2.52 * (laplacian / BOHR_TO_ANGSTROM ** 5) ** 2 + 5.2
     return energy / 4.184
 
 def Nikolaienko_2012(rho, contact_type='N-H...O'):

@@ -19,7 +19,7 @@ def read_input(file):
         return filename, ext, abs_dir, pdb_file
     else:
         in_file = read(file)
-        return filename, ext, abs_dir, in_file
+        return in_file
 
 
 def get_symbol(z):

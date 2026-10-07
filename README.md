@@ -239,7 +239,6 @@ The detector reports geometric patterns, not **chemical truths**. A short N··�
 
 - **Hydrogen atoms must be explicit** in the input structure for hydrogen-bond detection.
 - **Deuterium (`D`) is not recognised**; rename it to `H` before use.
-- All coordinates are assumed to be in **Ångströms (Å)**.
 - Input reading stability is extensively tested on **xyz**-files. Other types like gaussian log/out, mol/mol2 and cif are also available through `ase.io.read`. Protein databank files are available through `ase.io.proteindatabank.read_proteindatabank`.
 
 ---

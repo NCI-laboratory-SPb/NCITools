@@ -127,4 +127,4 @@ HOMA_PARAMS = {
     "NS":  (1.616,  71.875),
 }
 
-bohr_to_angstrom = 0.529177249
+BOHR_TO_ANGSTROM = 0.529177249
