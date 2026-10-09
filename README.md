@@ -49,14 +49,16 @@ The **Confidence Score** is a number between 0 and 1 that indicates how closely 
 
 **Interpretation:**
 
-| Range | Meaning | Recommendation |
-| :--- | :--- | :--- |
-| **0.90 – 1.00** | Very high confidence. Geometry is almost ideal for this type of interaction. | Can be considered a reliable result. |
-| **0.75 – 0.90** | High confidence. Geometry is good but with minor deviations from ideal. | Usually considered reliable. This is the default threshold. |
-| **0.50 – 0.75** | Medium confidence. Geometry deviates noticeably from ideal. | Requires visual inspection. May be a different interaction type or an artefact. |
-| **0.00 – 0.50** | Low confidence. Geometry is far from ideal for this type. | Likely a random close contact, not a real interaction. |
+| Range           | Meaning                                                                        | Comments                                                                        |
+|:----------------|:-------------------------------------------------------------------------------|:--------------------------------------------------------------------------------|
+| **0.90 – 1.00** | Very high confidence. Geometry is almost perfect for this type of interaction. | Can be considered a reliable result.                                            |
+| **0.8 – 0.90**  | High confidence. Geometry is good but with some deviations from ideal.         | Also a reliable result.                                                         |
+| **0.75 – 0.80** | Medium confidence. Some weak interactions may appear here.                     | On the lowest border of the threshold.                                          |
+| **0.50 – 0.75** | Low confidence. Geometry deviates noticeably from ideal.                       | Requires visual inspection. May be a different interaction type or an artefact. |
+| **0.00 – 0.50** | Very low confidence. Geometry is far from ideal for this type.                 | Likely a random close contact, not a real interaction.                          |
 
 **Example:** A hydrogen bond with `confidence score = 0.94` (see table below) is a very reliable result. A bond with `score = 0.60` may be a weak or distorted hydrogen bond and should be checked manually.
+Confidence score correlates with the strength of the interaction. 
 
 ### How are aromatic rings identified?
 

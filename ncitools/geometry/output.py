@@ -45,6 +45,7 @@ _SIGMA_HOLE_HEADER = [
     "Energy, kcal/mol",
 ]
 
+CITINGS = []
 
 # --------------------------------------------------------------------------- #
 #  Public API
@@ -89,6 +90,7 @@ def output(
             if rows:
                 _write_section(f, section, rows)
 
+        _recommended_citings(f)
         _write_quote(f)
 
 
@@ -113,7 +115,7 @@ def _build_sections(correlation_hb, correlation_sb) -> list:
         _sigma_hole_section("HB", "HYDROGEN BONDS",
                             lambda d: correlation_hb(
                                 d["length_xb"],
-                                f"{d['symbol_d']}-H···{d['symbol_a']}",
+                                f"{d['symbol_d']}-H...{d['symbol_a']}",
                             )),
         _sigma_hole_section("XB", "HALOGEN BONDS",
                             lambda d: correlation_sb(
@@ -160,7 +162,12 @@ def _sigma_hole_section(
     interaction energy in kcal/mol.
     """
     def row_func(d, i):
-        energy = correlation(d)
+        energy, cite = correlation(d)
+
+        #global CITINGS
+        if cite not in CITINGS:
+            CITINGS.append(cite)
+
         return [
             i + 1,
             f"{d['symbol_d']}-{d['symbol_x']}···{d['symbol_a']}",
@@ -355,3 +362,13 @@ def _write_quote(f) -> None:
         )
     )
     f.write(f"\n   -- {philosopher.upper()}\n")
+
+
+def _recommended_citings(f):
+    f.write("\n\n")
+    f.write("*" * 32 + '\n')
+    f.write("SUGGESTED CITATIONS FOR THIS RUN\n")
+    f.write("*" * 32 + '\n\n')
+
+    for index, cite in enumerate(CITINGS):
+        f.write(f'{index + 1}. {cite}\n')

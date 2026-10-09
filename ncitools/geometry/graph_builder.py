@@ -216,7 +216,7 @@ def _add_aromatic_centres(
 
     aromatic_index = 0
 
-    for cycle in nx.cycle_basis(covalent):
+    for cycle in nx.simple_cycles(covalent):
         ring_size = len(cycle)
         if not (min_cycle_size <= ring_size <= max_cycle_size):
             continue
