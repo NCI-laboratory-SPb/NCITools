@@ -197,7 +197,7 @@ def geom(input_file, output, angle_tol_hb, angle_tol, confidence, tolerance, rad
 
     ext = os.path.splitext(input_file)[1]
     geom_output(G, filename=output, ext=ext)
-    click.echo(f"Report written to {output}.nci! Buy developer a coffee")
+    click.echo(f"Report written to {output}.nci!\n\n Buy developer a coffee")
 
 
 # ---------------------------------------------------------------------- #
