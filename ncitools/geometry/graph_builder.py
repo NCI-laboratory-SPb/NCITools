@@ -40,7 +40,7 @@ def build_graph_with_covalent_pairs(
     radii: Optional[dict] = None,
     tolerance: float = 0.2,
     min_cycle_size: int = 5,
-    max_cycle_size: int = 9,
+    max_cycle_size: int = 7,
     planarity_tol: float = 0.10,
     homa_threshold: float = 0.65,
     homa_params: Optional[dict] = None,
@@ -215,8 +215,9 @@ def _add_aromatic_centres(
             covalent.add_edge(i, j)
 
     aromatic_index = 0
+    cycles = nx.simple_cycles(covalent, length_bound=max_cycle_size)
 
-    for cycle in nx.simple_cycles(covalent):
+    for cycle in cycles:
         ring_size = len(cycle)
         if not (min_cycle_size <= ring_size <= max_cycle_size):
             continue
@@ -321,9 +322,6 @@ def _is_planar_centre(
     center = (p1 + p2 + p3) / 3
 
     distance = np.linalg.norm(center - n_pos)
-
-    if atom_idx == 57:
-        print(distance)
 
     return distance <= tolerance
 

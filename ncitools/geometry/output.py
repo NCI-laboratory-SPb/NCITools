@@ -164,8 +164,7 @@ def _sigma_hole_section(
     def row_func(d, i):
         energy, cite = correlation(d)
 
-        #global CITINGS
-        if cite not in CITINGS:
+        if cite not in CITINGS and not cite is None:
             CITINGS.append(cite)
 
         return [

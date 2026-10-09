@@ -73,7 +73,7 @@ def hb_5(r, contact_type):
 
 def hb_uni_1(r):
     """Wendler, K., Thar, J., Zahn, S., & Kirchner, B. (2010).
-    J. Phys. Chem. A, 114(35), 9529-9536.
+    J. Phys. Chem. A, 114(35), 9529-9536. DOI: 10.1021/jp103470e
     """
 
     return np.maximum(0, 79.0 / (r ** 3.78)) # R^2 = 966, RMSD = 1.31 kcal/mol
@@ -205,7 +205,7 @@ def universal_1_hb(r, contact_type):
 
     else:
         """Wendler, K., Thar, J., Zahn, S., & Kirchner, B. (2010).
-        J. Phys. Chem. A, 114(35), 9529-9536."""
+        J. Phys. Chem. A, 114(35), 9529-9536. DOI: 10.1021/jp103470e"""
         return np.maximum(0, 79.0 / (r ** 3.78)), hb_uni_1.__doc__  # R^2 = 966, RMSD = 1.31 kcal/mol;
 
 
@@ -225,7 +225,7 @@ def universal_1_sb(r, contact_type):
                           'SbF', 'SbCl', 'SbBr', 'SbI'):
         return np.maximum(0, pnb_1(r, contact_type)), pnb_1.__doc__
     else:
-        return 0, ''
+        return 0, None
         
         
 
