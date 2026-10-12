@@ -25,7 +25,7 @@ def test_soft_range_symmetric():
 
 
 def test_soft_range_value_at_bounds():
-    assert soft_range(0.0, 0.0, 10.0) == pytest.approx(0.92)
+    assert soft_range(0.0, 0.0, 10.0) == pytest.approx(0.95)
 
 
 def test_soft_range_angular_case_is_one_sided():

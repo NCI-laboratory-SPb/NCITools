@@ -17,21 +17,21 @@ from ncitools.correlations import universal_1_hb, universal_1_sb
 # --------------------------------------------------------------------------- #
 
 def test_universal_1_hb_returns_finite_negative_energy():
-    energy = universal_1_hb(1.8, "O-H···O")
+    energy, _ = universal_1_hb(1.8, "O-H···O")
     assert np.isfinite(energy)
     assert energy >= 0
 
 
 def test_universal_1_hb_is_monotonic_in_distance():
-    e_short = universal_1_hb(1.6, "O-H···O")
-    e_long = universal_1_hb(2.2, "O-H···O")
+    e_short, _ = universal_1_hb(1.6, "O-H···O")
+    e_long, _ = universal_1_hb(2.2, "O-H···O")
     assert e_short > e_long
 
 
 def test_universal_1_hb_accepts_zero_distance_without_crashing_shape():
     """Pathological r=0 must be handled gracefully (no TypeError)."""
     try:
-        result = universal_1_hb(0.0, "O-H···O")
+        result, _ = universal_1_hb(0.0, "O-H···O")
     except (ZeroDivisionError, FloatingPointError, ValueError):
         return
     assert np.isfinite(result) or np.isinf(result)
@@ -42,11 +42,11 @@ def test_universal_1_hb_accepts_zero_distance_without_crashing_shape():
 # --------------------------------------------------------------------------- #
 
 def test_universal_1_sb_returns_finite_value():
-    energy = universal_1_sb(3.2, "IN")
+    energy, _ = universal_1_sb(3.2, "IN")
     assert np.isfinite(energy)
 
 
 def test_universal_1_sb_is_monotonic_in_distance():
-    e_short = universal_1_sb(3.0, "IN")
-    e_long = universal_1_sb(3.6, "IN")
+    e_short, _ = universal_1_sb(3.0, "IN")
+    e_long, _ = universal_1_sb(3.6, "IN")
     assert e_short > e_long

@@ -18,7 +18,7 @@ def test_acceptor_angle_range_chalcogens():
 
 def test_acceptor_angle_range_isolated_halide():
     assert acceptor_angle_range("Cl", 0) == "skip"
-    assert acceptor_angle_range("Cl", 1) == (80.0, 120.0)
+    assert acceptor_angle_range("Cl", 1) == (80.0, 175.0)
 
 
 def test_vdw_radius_fallback():

@@ -113,18 +113,22 @@ METALS = {
 # Ropt is the optimal bond length in Å and alpha is the HOMA normalization
 # coefficient in Å^-2.
 #
-# The main parameters follow the extended HOMA93 parametrization.
-# CSe and NS are included to improve coverage of heavier heterocycles.
+# The main parameters follow this source: Krygowski, T. M. (1993). J. Chem. Inf. Comp. Sci., 33(1), 70-78.
+# NS: Frizzo, C. P., & Martins, M. A. (2012)., 23(2), 375-380.
+# BB, CB and NB: Szatylowicz, H., Wieczorkiewicz, P. A., & Krygowski, T. M. (2022). Sci, 4(2), 24.
 HOMA_PARAMS = {
     "CC":  (1.388, 257.70),
     "CN":  (1.334,  93.52),
     "CO":  (1.265, 157.38),
     "CP":  (1.698, 118.91),
     "CS":  (1.677,  94.09),
-    "CSe": (1.8217, 84.9144),
+    "CSe": (1.8217, 84.914),
     "NN":  (1.309, 130.33),
     "NO":  (1.248,  57.21),
     "NS":  (1.616,  71.875),
+    "BB":  (1.567, 244.147),
+    "BC":  (1.424, 104.507),
+    "BN":  (1.402, 72.03),
 }
 
 BOHR_TO_ANGSTROM = 0.529177249
