@@ -10,13 +10,11 @@ def read_input(file):
     Returns (filename, extension, directory, ASE Atoms object).
     """
 
-    filename = os.path.basename(file).split('.')[0]
-    abs_dir = os.path.dirname(file)
     ext = os.path.splitext(file)[1]
 
     if ext == ".pdb":
         pdb_file = read_proteindatabank(file)
-        return filename, ext, abs_dir, pdb_file
+        return pdb_file
     else:
         in_file = read(file)
         return in_file

@@ -110,7 +110,7 @@ def find_nci_bonds(
             sorted_dists, sorted_inds = zip(*pairs)
 
             # The closest heavy atom is normally the donor D itself.
-            for dist, a in zip(sorted_dists[1:], sorted_inds[1:]):
+            for dist, a in zip(sorted_dists[1:], sorted_inds[1:]): # <----------------------------------------------      1 -> G.node[x]['coord_num']
                 a_el = symbols[a]
 
                 cutoff = vdw_radius(x_el, radii) + vdw_radius(a_el, radii)
