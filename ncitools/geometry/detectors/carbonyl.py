@@ -105,7 +105,7 @@ def _covalent_neighbours(G: nx.Graph, idx: int) -> list:
     return [
         n for n in G.adj[idx]
         if not isinstance(n, str)
-        and G.edges[idx, n].get("bond_type") == "covalent"
+        and G.edges[idx, n].get("bond_type") in ("covalent", "coordination")
     ]
 
 

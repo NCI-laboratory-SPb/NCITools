@@ -305,7 +305,7 @@ def _find_n_pi(
             score_proj = soft_less(projection_distance, ring["radius"])
 
             # Y–lp···π angular criterion (Y = covalent neighbour of lp)
-            if angle_range == "skip":
+            if angle_range == "skip": # <------------------------------------------------------------------------------- why?
                 score_angle_y, angle_y = 1.0, None
             else:
                 angle_min, angle_max = angle_range
@@ -381,7 +381,7 @@ def _find_ion_pi(
             dist = float(np.linalg.norm(vec))
             score_dist = soft_less(dist, cutoff_ion_pi)
 
-            if dist < 1e-8:
+            if score_dist < 0.01:
                 continue
 
             angle = float(np.degrees(np.arccos(np.clip(
