@@ -9,6 +9,7 @@ def read_input(file):
     """Read molecular structure file (PDB or other ASE formats).
     Returns (filename, extension, directory, ASE Atoms object).
     """
+    "kek"
 
     ext = os.path.splitext(file)[1]
 
