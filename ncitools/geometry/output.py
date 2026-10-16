@@ -293,7 +293,7 @@ def _carbonyl_section() -> Section:
     header = [
         "№", "Type", "Confidence score",
         "Donor O", "Acceptor C",
-        "Distance (Å)", "BD angle (°)", "Plane angle (°)",
+        "Distance (Å)", "Bürgi–Dunitz angle (°)", "Angle RAC (°)",
     ]
 
     def row_func(d, i):
@@ -301,12 +301,12 @@ def _carbonyl_section() -> Section:
             i + 1,
             "n→π*",
             round(d["confidence_score"], 2),
-            int(d["donor_oxygen"]) + 1,
+            int(d["donor_atom"]) + 1,
             int(d["acceptor_carbon"]) + 1,
             round(d["distance"], 3),
             round(d["burgi_dunitz_angle"], 1),
-            "—" if d["plane_angle"] is None
-            else round(d["plane_angle"], 1),
+            "—" if d["angle"] is None
+            else round(d["angle"], 1),
         ]
 
     return Section("carbonyl", "CARBONYL n→π*", header, row_func)
