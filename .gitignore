@@ -34,7 +34,5 @@ Thumbs.db
 *.nci
 
 # Not shipped in the first release
-ncitools/topology/
 ncitools/io/
 ncitools/qc/
-ncitools/old/
