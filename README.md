@@ -1,7 +1,7 @@
 # NCITools — Non-Covalent Interaction Analysis
 
 <p align="center">
-  <img src="logo.png" alt="Logo" width="200">
+  <img src="logo.png" alt="Logo" width="600">
 </p>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
