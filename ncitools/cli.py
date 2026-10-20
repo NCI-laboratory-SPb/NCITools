@@ -44,6 +44,7 @@ _INTERACTION_LABELS = {
     "TetB":          "Tetrel bonds",
     "stacking":      "π···π stacking",
     "H-pi":          "X–H···π",
+    "X-pi":          "R-X···π",
     "n-pi":          "Lone pair···π",
     "ion-pi":        "Ion···π",
     "metallophilic": "Metallophilic",
@@ -162,7 +163,7 @@ def geom(input_file, output, angle_tol_hb, angle_tol, confidence, tolerance, rad
             confidence_threshold=confidence,
         )
 
-    aromatic_family = {"stacking", "H-pi", "n-pi", "ion-pi"}
+    aromatic_family = {"stacking", "H-pi", "X-pi", "n-pi", "ion-pi"}
     if not aromatic_family.issubset(skipped):
         G = find_nci_with_aromatic(
             atoms, G,

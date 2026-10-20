@@ -138,6 +138,7 @@ def _build_sections(correlation_hb, correlation_sb) -> list:
         _stacking_section(),
         _h_pi_section(),
         _n_pi_section(),
+        _x_pi_section(),
         _ion_pi_section(),
         _metallophilic_section(),
         _carbonyl_section(),
@@ -219,6 +220,30 @@ def _h_pi_section() -> Section:
         ]
 
     return Section("H-pi", "X-H···π INTERACTIONS", header, row_func)
+
+
+def _x_pi_section() -> Section:
+    header = [
+        "№", "Type", "Confidence score",
+        "R", "X", "Ring",
+        "X···π (Å)", "Angle (°)", "Angle_to_normal (°)"
+    ]
+
+    def row_func(d, i):
+        return [
+            i + 1,
+            f"{d['symbol_R']}-{d['symbol_X']}···π",
+            round(d["confidence_score"], 2),
+            int(d["R_num"]) + 1,
+            int(d["X_num"]) + 1,
+            _cycle_to_string(d["cycle"]),
+            round(d["X_centroid_distance"], 3),
+            round(d["angle"], 1),
+            round(d["angle_to_normal"], 1)
+        ]
+
+    return Section("X-pi", "R-X···π INTERACTIONS", header, row_func)
+
 
 
 def _n_pi_section() -> Section:
