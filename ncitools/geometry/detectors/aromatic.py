@@ -441,7 +441,7 @@ def _find_X_pi(
             and G.edges[Hal, n]["bond_type"] in ("covalent", "coordination")
         ]
         # checking for halogen-ion
-        if not neighbours:
+        if len(neighbours) != 1:
             continue
 
         r = neighbours[0]
