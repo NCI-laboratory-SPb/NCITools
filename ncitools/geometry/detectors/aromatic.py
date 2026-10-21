@@ -429,13 +429,13 @@ def _find_X_pi(
     symbols = atoms.get_chemical_symbols()
     positions = atoms.positions
 
-    halogen_indices = [i for i, s in enumerate(symbols) if s in ["F", "Cl", "Br", "I"]]
+    halogen_indices = [i for i, s in enumerate(symbols) if s in ["Cl", "Br", "I"]]
 
     for Hal in tqdm(halogen_indices, desc="Searching for R-X···π interactions"):
         neighbours = [
             n for n in G.adj[Hal]
             if not isinstance(n, str)
-            and G.edges[Hal, n]["bond_type"] == "covalent"
+            and G.edges[Hal, n]["bond_type"] in ("covalent", "coordination")
         ]
         # checking for halogen-ion
         if not neighbours:
