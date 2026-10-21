@@ -30,7 +30,7 @@ import numpy as np
 
 DEFAULT_STEEPNESS = 1.0
 DEFAULT_VALUE_AT_THRESHOLD = 0.8
-DEFAULT_VALUE_AT_BOUNDS = 0.92
+DEFAULT_VALUE_AT_BOUNDS = 0.95
 
 
 # --------------------------------------------------------------------------- #

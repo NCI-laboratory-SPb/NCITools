@@ -21,7 +21,8 @@ from pathlib import Path
 import click
 from ase.io import read
 
-from ncitools.constants import BONDI, RADII
+from ncitools.constants import BONDI, RADII, CHARRY_TKATCHENKO, BOHR_TO_ANGSTROM
+from ncitools.utils import read_input
 from ncitools.geometry import (
     build_graph_with_covalent_pairs,
     find_carbonyl_interactions,
@@ -89,7 +90,11 @@ _INTERACTION_LABELS = {
     type=click.Choice(list(_INTERACTION_LABELS)),
     help="Interaction type(s) to skip (repeatable).",
 )
-def geom(input_file, output, angle_tol_hb, angle_tol, confidence, tolerance, radii, skip):
+@click.option(
+    "--bohr", is_flag=True, default=False,
+    help="Specifying coordinates units. In default, coordinates are assumed in angstroms.",
+)
+def geom(input_file, output, angle_tol_hb, angle_tol, confidence, tolerance, radii, skip, bohr):
     """
     Detect non-covalent interactions from atomic coordinates only.
 
@@ -102,8 +107,11 @@ def geom(input_file, output, angle_tol_hb, angle_tol, confidence, tolerance, rad
 
     vdw_radii = BONDI if radii == "bondi" else CHARRY_TKATCHENKO
 
-    atoms = read(input_file)
+    atoms = read_input(input_file)
     click.echo(f"Loaded {len(atoms)} atoms from {input_file}")
+
+    if bohr:
+        atoms.positions *= BOHR_TO_ANGSTROM
 
     # ------------------------------------------------------------------ #
     # Covalent graph
@@ -190,7 +198,7 @@ def geom(input_file, output, angle_tol_hb, angle_tol, confidence, tolerance, rad
 
     ext = os.path.splitext(input_file)[1]
     geom_output(G, filename=output, ext=ext)
-    click.echo(f"Report written to {output}.nci")
+    click.echo(f"Report written to {output}.nci!\n\n Buy developer a coffee")
 
 
 # ---------------------------------------------------------------------- #

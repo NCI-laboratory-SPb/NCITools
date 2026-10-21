@@ -92,12 +92,13 @@ def find_nci_bonds(
         x_el = symbols[x]
 
         for d in list(G.adj[x]):
-            if isinstance(d, str):
+            d_el = symbols[d]
+
+            if isinstance(d, str) or d_el == 'H':
                 continue
             if G.edges[x, d]["bond_type"] not in ("covalent", "coordination"):
                 continue
 
-            d_el = symbols[d]
 
             # Sort acceptors by distance from X so we can stop early.
             distances = atoms.get_distances(x, acceptor_indices, mic=True)
@@ -109,7 +110,8 @@ def find_nci_bonds(
             sorted_dists, sorted_inds = zip(*pairs)
 
             # The closest heavy atom is normally the donor D itself.
-            for dist, a in zip(sorted_dists[1:], sorted_inds[1:]):
+            num = G.nodes[x]['num_neighbours']
+            for dist, a in zip(sorted_dists[num:], sorted_inds[num:]):
                 a_el = symbols[a]
 
                 cutoff = vdw_radius(x_el, radii) + vdw_radius(a_el, radii)
@@ -126,6 +128,7 @@ def find_nci_bonds(
                 )
 
                 total = score_dist * score_angle_dxa * score_angle_xay
+
                 if total < confidence_threshold:
                     continue
 

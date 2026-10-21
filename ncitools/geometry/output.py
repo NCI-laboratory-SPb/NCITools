@@ -45,6 +45,7 @@ _SIGMA_HOLE_HEADER = [
     "Energy, kcal/mol",
 ]
 
+CITINGS = []
 
 # --------------------------------------------------------------------------- #
 #  Public API
@@ -89,6 +90,7 @@ def output(
             if rows:
                 _write_section(f, section, rows)
 
+        _recommended_citings(f)
         _write_quote(f)
 
 
@@ -113,7 +115,7 @@ def _build_sections(correlation_hb, correlation_sb) -> list:
         _sigma_hole_section("HB", "HYDROGEN BONDS",
                             lambda d: correlation_hb(
                                 d["length_xb"],
-                                f"{d['symbol_d']}-H···{d['symbol_a']}",
+                                f"{d['symbol_d']}-H...{d['symbol_a']}",
                             )),
         _sigma_hole_section("XB", "HALOGEN BONDS",
                             lambda d: correlation_sb(
@@ -161,6 +163,11 @@ def _sigma_hole_section(
     interaction energy in kcal/mol.
     """
     def row_func(d, i):
+        energy, cite = correlation(d)
+
+        if cite not in CITINGS and not cite is None:
+            CITINGS.append(cite)
+
         return [
             i + 1,
             f"{d['symbol_d']}-{d['symbol_x']}···{d['symbol_a']}",
@@ -173,7 +180,7 @@ def _sigma_hole_section(
             round(d["length_da"], 3),
             round(d["angle"], 1),
             "—" if d["angle_xay"] is None else round(d["angle_xay"], 1),
-            round(float(correlation(d)), 1),
+            "—" if energy == 0 else round(float(energy), 1),
         ]
 
     return Section(key, title, _SIGMA_HOLE_HEADER, row_func)
@@ -311,7 +318,7 @@ def _carbonyl_section() -> Section:
     header = [
         "№", "Type", "Confidence score",
         "Donor O", "Acceptor C",
-        "Distance (Å)", "BD angle (°)", "Plane angle (°)",
+        "Distance (Å)", "Bürgi–Dunitz angle (°)", "Angle RAC (°)",
     ]
 
     def row_func(d, i):
@@ -319,12 +326,12 @@ def _carbonyl_section() -> Section:
             i + 1,
             "n→π*",
             round(d["confidence_score"], 2),
-            int(d["donor_oxygen"]) + 1,
+            int(d["donor_atom"]) + 1,
             int(d["acceptor_carbon"]) + 1,
             round(d["distance"], 3),
             round(d["burgi_dunitz_angle"], 1),
-            "—" if d["plane_angle"] is None
-            else round(d["plane_angle"], 1),
+            "—" if d["angle"] is None
+            else round(d["angle"], 1),
         ]
 
     return Section("carbonyl", "CARBONYL n→π*", header, row_func)
@@ -343,6 +350,7 @@ def _write_header(f, filename: str, ext: str) -> None:
     now = datetime.now()
     f.write(
         "NCITools: Geometry based analysis\n"
+        "Authors: Kaplanskiy M.V., Tupikina E.Yu., Sutkin V.S., Rudenko V.A.\n"
         f"Date: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
         f"Input file: {filename}{ext}\n"
     )
@@ -358,7 +366,7 @@ def _write_section(f, section: Section, rows: list) -> None:
         rows,
         headers=section.header,
         tablefmt="github",
-        floatfmt=".3f",
+    #    floatfmt=".3f",
         numalign="right",
         stralign="center",
     )
@@ -378,3 +386,13 @@ def _write_quote(f) -> None:
         )
     )
     f.write(f"\n   -- {philosopher.upper()}\n")
+
+
+def _recommended_citings(f):
+    f.write("\n\n")
+    f.write("*" * 32 + '\n')
+    f.write("SUGGESTED CITATIONS FOR THIS RUN\n")
+    f.write("*" * 32 + '\n\n')
+
+    for index, cite in enumerate(CITINGS):
+        f.write(f'{index + 1}. {cite}\n')

@@ -137,11 +137,16 @@ def _find_pi_stacking(
         node1, ring1 = cycles[i]
         c1 = ring1["position"]
         n1 = ring1["normal"]
+        numbers_1 = set(ring1["cycle"])
 
         for j in range(i + 1, len(cycles)):
             node2, ring2 = cycles[j]
             c2 = ring2["position"]
             n2 = ring2["normal"]
+            numbers_2 = set(ring2["cycle"])
+
+            if numbers_1 & numbers_2:
+                continue
 
             centroid_distance = float(np.linalg.norm(c2 - c1))
             score_dist = soft_less(centroid_distance, stacking_dist_threshold)
@@ -153,12 +158,10 @@ def _find_pi_stacking(
             ))))
             score_angle = soft_less(angle, angle_stacking_threshold)
 
-            if angle > angle_stacking_threshold:
-                continue
-
             diff = c2 - c1
             offset = float(np.linalg.norm(diff - np.dot(diff, n1) * n1))
             score_offset = soft_less(offset, offset_threshold)
+
 
             total = score_dist * score_angle * score_offset
             if total < confidence_threshold:
@@ -310,7 +313,7 @@ def _find_n_pi(
             score_proj = soft_less(projection_distance, ring["radius"])
 
             # Y–lp···π angular criterion (Y = covalent neighbour of lp)
-            if angle_range == "skip":
+            if angle_range == "skip": # <------------------------------------------------------------------------------- why?
                 score_angle_y, angle_y = 1.0, None
             else:
                 angle_min, angle_max = angle_range
@@ -386,7 +389,7 @@ def _find_ion_pi(
             dist = float(np.linalg.norm(vec))
             score_dist = soft_less(dist, cutoff_ion_pi)
 
-            if dist < 1e-8:
+            if score_dist < 0.01:
                 continue
 
             angle = float(np.degrees(np.arccos(np.clip(

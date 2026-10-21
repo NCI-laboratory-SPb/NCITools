@@ -39,7 +39,7 @@ def calculate_homa(
         HOMA = 1 - (1 / n) * Σ α_i (R_i - R_opt,i)²
 
     where the sum runs over the ``n`` bonds of the cycle.  A value close
-    to 1 indicates a fully delocalised aromatic ring.
+    to 1 indicates a fully delocalized aromatic ring.
 
     Parameters
     ----------

@@ -40,7 +40,7 @@ def build_graph_with_covalent_pairs(
     radii: Optional[dict] = None,
     tolerance: float = 0.2,
     min_cycle_size: int = 5,
-    max_cycle_size: int = 9,
+    max_cycle_size: int = 7,
     planarity_tol: float = 0.10,
     homa_threshold: float = 0.65,
     homa_params: Optional[dict] = None,
@@ -215,8 +215,9 @@ def _add_aromatic_centres(
             covalent.add_edge(i, j)
 
     aromatic_index = 0
+    cycles = nx.simple_cycles(covalent, length_bound=max_cycle_size)
 
-    for cycle in nx.cycle_basis(covalent):
+    for cycle in cycles:
         ring_size = len(cycle)
         if not (min_cycle_size <= ring_size <= max_cycle_size):
             continue
@@ -295,7 +296,7 @@ def _assign_coordination_numbers(
         num_neighbours = _count_covalent_neighbours(G, atom_idx)
 
         if symbols[atom_idx] in pnictogens and num_neighbours == 3:
-            if _is_planar_centre(atoms, G, atom_idx, tolerance=0.1):
+            if _is_planar_centre(atoms, G, atom_idx, tolerance=0.15):
                 num_neighbours += 1
 
         G.nodes[atom_idx]["num_neighbours"] = num_neighbours
@@ -340,7 +341,7 @@ def _check_hydrogen_connectivity(atoms: Atoms, G: nx.Graph) -> None:
         )
         if count != 1:
             print(
-                "WARNING: At least one hydrogen atom has a number of "
+                f"WARNING: hydrogen atom {atom_idx + 1} has a number of "
                 "covalent and/or coordination neighbours different from 1."
             )
-            return
+    return

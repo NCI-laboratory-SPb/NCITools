@@ -69,7 +69,7 @@ def acceptor_angle_range(element: str, num_neighbours: int) -> AngleRange:
     if element in HALOGENS:
         if num_neighbours == 0:
             return "skip"
-        return 80.0, 120.0
+        return 80.0, 175.0
 
     return None
 
@@ -106,7 +106,7 @@ def soft_acceptor_angle_score(
     for y in G.adj[a]:
         if isinstance(y, str):
             continue
-        if G.edges[a, y]["bond_type"] != "covalent":
+        if G.edges[a, y]["bond_type"] not in ("covalent", "coordination"):
             continue
 
         angle_xay = atoms.get_angle(x, a, y, mic=True)

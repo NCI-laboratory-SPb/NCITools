@@ -150,7 +150,7 @@ def test_hydrogen_bond_angle_threshold(water_dimer):
     [
         (["Cl", "Br", "I"],       "XB",  "halogen_bond_system"),
         (["S", "Se", "Te"],       "ChB", "chalcogen_bond_system"),
-        #(["P", "As", "Sb", "Bi"], "PnB", "pnictogen_bond_system"),
+        (["P", "As", "Sb", "Bi"], "PnB", "pnictogen_bond_system"),
     ],
 )
 def test_find_nci_bonds_other_types(
