@@ -13,7 +13,7 @@ import random
 import textwrap
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Callable, Optional, TextIO
 
 import networkx as nx
 import numpy as np
@@ -57,6 +57,7 @@ def output(
     ext: str = ".default",
     correlation_hb=universal_1_hb,
     correlation_sb=universal_1_sb,
+    warnings: list[str] = None
 ) -> None:
     """
     Write a formatted ``.nci`` report summarising all detected interactions.
@@ -73,6 +74,8 @@ def output(
         report header.
     correlation_hb, correlation_sb
         Empirical correlations used to convert geometries into energies.
+    warnings : list[str], optional
+        Spatial clashes and undesirable intersections of bonds
     """
     edges_by_type = _group_edges_by_type(G)
     sections = _build_sections(correlation_hb, correlation_sb)
@@ -89,6 +92,9 @@ def output(
             ]
             if rows:
                 _write_section(f, section, rows)
+
+        if warnings:
+            _write_warning(f, warnings)
 
         _recommended_citings(f)
         _write_quote(f)
@@ -373,6 +379,14 @@ def _write_section(f, section: Section, rows: list) -> None:
     f.write(table)
     f.write("\n")
 
+def _write_warning(f, warnings: list) -> None:
+    f.write("\n")
+    f.write("$" * 16 + "\n")
+    f.write("SPATIAL WARNINGS" + "\n")
+    f.write("$" * 16 + "\n\n")
+    for warn in warnings:
+        f.write(warn + "\n")
+    f.write("\n")
 
 def _write_quote(f) -> None:
     philosopher, quote = random.choice(quotes)
