@@ -25,23 +25,54 @@ def _segment_distance(
         p1: np.ndarray,
         p2: np.ndarray,
         q1: np.ndarray,
-        q2: np.ndarray,
-        num_samples: int = 5
+        q2: np.ndarray
 ) -> float:
     """
-    Approximate minimum distance between two 3D line segments (p1-p2 and q1-q2)
-    using uniform point sampling.
+    Calculating minimum distance between two 3D line segments (p1-p2 and q1-q2).
+    The algorithm is based on Lumelsky's parametric method (doi: 10.1016/0020-0190(85)90032-8)
+    Each edge must have a finite length greater than zero.
+
+    Mathematical framework and intermediary values:
+    * e_i, e_j : "Edge" directional vectors of the first and second segments.
+    * e_ij : Vector between the starting points of the two edges.
+    * D1, D2 : Squared lengths of the first and second edges.
+    * R : Dot product of the directional vectors (measure of collinearity).
+    * S1, S2 : Dot products of the translation vector `e_ij` and the directional vectors.
+    * lam : The main determinant; as the two edges become increasingly closer to parallel.
+    * t, u (in [0, 1]) : The ratios that determine at which point along the length of
+      each edge the connecting min-distance vector lies.
+    * delta_ij : The shortest distance between the two evaluated points.
     """
-    t = np.linspace(0, 1, num_samples)
 
-    # Generate points along both segments
-    points_p = np.outer(1 - t, p1) + np.outer(t, p2)
-    points_q = np.outer(1 - t, q1) + np.outer(t, q2)
+    e_i = p2 - p1
+    e_j = q2 - q1
+    e_ij = p1 - q1
 
-    # Calculate pairwise distances between all sampled points
-    diff = points_p[:, None, :] - points_q[None, :, :]
-    dists = np.linalg.norm(diff, axis=-1)
-    return float(np.min(dists))
+    D1 = np.dot(e_i, e_i)
+    D2 = np.dot(e_j, e_j)
+    S1 = np.dot(e_i, e_ij)
+    S2 = np.dot(e_j, e_ij)
+    R = np.dot(e_i, e_j)
+    lam = (D1 * D2) - R**2
+
+    if lam > 10e-8:
+        t = (S1 * D2 - S2 * R) / lam
+    else:
+        t = 0.0 # parallel edges
+
+    t = np.clip(t, 0.0, 1.0) # Limiting "t" to the range [0, 1]
+    u = (t * R - S2) / D2
+
+    u_f = np.clip(u, 0.0, 1.0) # Limiting "u" to the range [0, 1]
+
+    if u_f != u: # If "u" has gone beyond [0, 1], we fix it and RECALCULATE "t"
+        t = (u_f * R + S1) / D1
+        t = np.clip(t, 0.0, 1.0)
+        u = u_f
+
+    delta_ij = e_i * t - e_j * u - e_ij
+    return float(np.linalg.norm(delta_ij))
+
 
 
 def check_spatial_clashes(
@@ -53,6 +84,20 @@ def check_spatial_clashes(
     Identify independent edges (covalent, coordination, or non-covalent)
     that cross or pass too close to each other in 3D space.
     Incident edges are excluded.
+
+    Parameters
+    ----------
+    atoms : ase.Atoms
+        Atomic configuration.
+    G : nx.Graph
+        Final molecular graph
+    clash_threshold : float
+        Minimum distance between two bonds.
+
+    Returns
+    -------
+    list[str]
+        A list of warnings about intersecting or close edges in space
     """
     warnings = []
     edges = []
