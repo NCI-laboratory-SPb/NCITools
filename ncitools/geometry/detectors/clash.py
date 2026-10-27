@@ -38,15 +38,15 @@ def _segment_distance(
     * D1, D2 : Squared lengths of the first and second edges.
     * R : Dot product of the directional vectors (measure of collinearity).
     * S1, S2 : Dot products of the translation vector `e_ij` and the directional vectors.
-    * lam : The main determinant; as the two edges become increasingly closer to parallel.
+    * lam : The main determinant. Approaching 0 means the segments are parallel.
     * t, u (in [0, 1]) : The ratios that determine at which point along the length of
-      each edge the connecting min-distance vector lies.
+    each edge the connecting min-distance vector lies.
     * delta_ij : The shortest distance between the two evaluated points.
     """
 
     e_i = p2 - p1
     e_j = q2 - q1
-    e_ij = p1 - q1
+    e_ij = q1 - p1
 
     D1 = np.dot(e_i, e_i)
     D2 = np.dot(e_j, e_j)
@@ -139,7 +139,7 @@ def check_spatial_clashes(
     for node in G.nodes():
         neighbors = {node}
         for nbr, edge_data in G[node].items():
-            if edge_data.get("bond_type") in ("covalent", "coordination", "aromatic"):
+            if edge_data.get("bond_type") in ("covalent", "aromatic"):
                 neighbors.add(nbr)
         cov_neighborhood[node] = set(neighbors)
 
