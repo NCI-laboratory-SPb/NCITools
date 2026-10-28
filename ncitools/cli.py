@@ -31,6 +31,7 @@ from ncitools.geometry import (
     find_nci_with_aromatic,
     output as geom_output,
 )
+from ncitools.geometry.detectors.clash import check_spatial_clashes
 
 
 # ---------------------------------------------------------------------- #
@@ -45,6 +46,7 @@ _INTERACTION_LABELS = {
     "TetB":          "Tetrel bonds",
     "stacking":      "π···π stacking",
     "H-pi":          "X–H···π",
+    "X-pi":          "R-X···π",
     "n-pi":          "Lone pair···π",
     "ion-pi":        "Ion···π",
     "metallophilic": "Metallophilic",
@@ -170,7 +172,7 @@ def geom(input_file, output, angle_tol_hb, angle_tol, confidence, tolerance, rad
             confidence_threshold=confidence,
         )
 
-    aromatic_family = {"stacking", "H-pi", "n-pi", "ion-pi"}
+    aromatic_family = {"stacking", "H-pi", "X-pi", "n-pi", "ion-pi"}
     if not aromatic_family.issubset(skipped):
         G = find_nci_with_aromatic(
             atoms, G,
@@ -191,12 +193,24 @@ def geom(input_file, output, angle_tol_hb, angle_tol, confidence, tolerance, rad
         )
 
     # ------------------------------------------------------------------ #
+    # Spatial clash detection
+    # ------------------------------------------------------------------ #
+    spatial_warnings = check_spatial_clashes(
+        atoms, G, clash_threshold = 1.0
+    )
+    if spatial_warnings:
+        click.echo("\n[!] Spatial proximity warnings:")
+        for warn in spatial_warnings:
+            click.echo(f"  {warn}")
+        click.echo()
+
+    # ------------------------------------------------------------------ #
     # Terminal summary and report
     # ------------------------------------------------------------------ #
     _print_summary(G)
 
     ext = os.path.splitext(input_file)[1]
-    geom_output(G, filename=output, ext=ext)
+    geom_output(G, filename=output, ext=ext, warnings=spatial_warnings)
     click.echo(f"Report written to {output}.nci!\n\n Buy developer a coffee")
 
 
