@@ -4,6 +4,8 @@ import os
 import numpy as np
 from ase.io import read
 from ase.io.proteindatabank import read_proteindatabank
+from pathlib import Path
+import tempfile
 
 def read_input(file):
     """Read molecular structure file (PDB or other ASE formats).
@@ -13,11 +15,48 @@ def read_input(file):
     ext = os.path.splitext(file)[1]
 
     if ext == ".pdb":
-        pdb_file = read_proteindatabank(file)
-        return pdb_file
+        try:
+            atoms = read_proteindatabank(file)
+            return atoms
+        except KeyError:
+            atoms = read_pdb_normalized(file)
+            return atoms
     else:
-        in_file = read(file)
-        return in_file
+        atoms = read(file)
+        return atoms
+
+def read_pdb_normalized(filename):
+    filename = Path(filename)
+
+    with open(filename, "r") as f:
+        lines = f.readlines()
+
+    fixed_lines = []
+
+    for line in lines:
+        if line.startswith(("ATOM  ", "HETATM")) and len(line) >= 78:
+            element = line[76:78].strip().upper()
+
+            if element == "D":
+                line = line[:76] + " H" + line[78:]
+
+        fixed_lines.append(line)
+
+    # Temporal copy of loaded PDB
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".pdb",
+        delete=False
+    ) as tmp:
+        tmp.writelines(fixed_lines)
+        tmp_path = Path(tmp.name)
+
+    try:
+        atoms = read_proteindatabank(str(tmp_path))
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    return atoms
 
 
 def get_symbol(z):
