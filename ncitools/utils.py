@@ -18,8 +18,9 @@ def read_input(file):
         try:
             atoms = read_proteindatabank(file)
             return atoms
-        except
-
+        except KeyError:
+            atoms = read_pdb_normalized(file)
+            return atoms
     else:
         atoms = read(file)
         return atoms
@@ -41,7 +42,7 @@ def read_pdb_normalized(filename):
 
         fixed_lines.append(line)
 
-    # Создаём временную копию PDB
+    # Temporal copy of loaded PDB
     with tempfile.NamedTemporaryFile(
         mode="w",
         suffix=".pdb",
