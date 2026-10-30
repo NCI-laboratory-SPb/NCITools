@@ -213,50 +213,11 @@ def geom(input_file, output, angle_tol_hb, angle_tol, confidence, tolerance, rad
     geom_output(G, filename=output, ext=ext, warnings=spatial_warnings)
     click.echo(f"Report written to {output}.nci!\n\n Buy developer a coffee")
 
-@click.command()
-@click.argument("input_file", type=click.Path(exists=True, dir_okay=False))
-@click.option(
-    "-o", "--output", default=None,
-    help="Output basename (without .nci). Defaults to the input file stem.",
-)
-@click.option(
-    "--angle-tol-hb", default=110.0, show_default=True,
-    help="Minimum D–X···A angle (degrees) for hydrogen bonds.",
-)
-@click.option(
-    "--angle-tol", default=150.0, show_default=True,
-    help="Minimum D–X···A angle (degrees) for  σ-hole bonds.",
-)
-@click.option(
-    "--confidence", default=0.75, show_default=True,
-    type=click.FloatRange(0.0, 1.0),
-    help="Minimum confidence score to accept an interaction.",
-)
-@click.option(
-    "--tolerance", default=0.2, show_default=True,
-    help="Extra slack (Å) added to covalent radii for bond detection.",
-)
-@click.option(
-    "--radii", default="bondi", show_default=True,
-    type=click.Choice(["bondi", "charry-tkachenko"]),
-    help="Van der Waals radii set used for contact detection.",
-)
-@click.option(
-    "--skip", multiple=True,
-    type=click.Choice(list(_INTERACTION_LABELS)),
-    help="Interaction type(s) to skip (repeatable).",
-)
-@click.option(
-    "--bohr", is_flag=True, default=False,
-    help="Specifying coordinates units. In default, coordinates are assumed in angstroms.",
-)
-def topology(input_file, output, angle_tol_hb, angle_tol, confidence, tolerance, radii, skip, bohr):
-    pass
-
 
 # ---------------------------------------------------------------------- #
 #  Helpers
 # ---------------------------------------------------------------------- #
+
 
 def _count_edges(G, bond_type: str) -> int:
     """Number of edges of a given ``bond_type``."""
@@ -309,7 +270,6 @@ def cli():
 
 
 cli.add_command(geom)
-cli.add_command(topology)
 
 
 if __name__ == "__main__":
