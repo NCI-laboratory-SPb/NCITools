@@ -13,7 +13,7 @@ import random
 import textwrap
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Callable, Optional, TextIO
 
 import networkx as nx
 import numpy as np
@@ -57,6 +57,7 @@ def output(
     ext: str = ".default",
     correlation_hb=universal_1_hb,
     correlation_sb=universal_1_sb,
+    warnings: list[str] = None
 ) -> None:
     """
     Write a formatted ``.nci`` report summarising all detected interactions.
@@ -73,6 +74,8 @@ def output(
         report header.
     correlation_hb, correlation_sb
         Empirical correlations used to convert geometries into energies.
+    warnings : list[str], optional
+        Spatial clashes and undesirable intersections of bonds
     """
     edges_by_type = _group_edges_by_type(G)
     sections = _build_sections(correlation_hb, correlation_sb)
@@ -89,6 +92,9 @@ def output(
             ]
             if rows:
                 _write_section(f, section, rows)
+
+        if warnings:
+            _write_warning(f, warnings)
 
         _recommended_citings(f)
         _write_quote(f)
@@ -140,6 +146,7 @@ def _build_sections(correlation_hb, correlation_sb) -> list:
         _stacking_section(),
         _h_pi_section(),
         _n_pi_section(),
+        _x_pi_section(),
         _ion_pi_section(),
         _metallophilic_section(),
         _carbonyl_section(),
@@ -228,6 +235,30 @@ def _h_pi_section() -> Section:
     return Section("H-pi", "X-H···π INTERACTIONS", header, row_func)
 
 
+def _x_pi_section() -> Section:
+    header = [
+        "№", "Type", "Confidence score",
+        "R", "X", "Ring",
+        "X···π (Å)", "Angle (°)", "Angle_to_normal (°)"
+    ]
+
+    def row_func(d, i):
+        return [
+            i + 1,
+            f"{d['symbol_R']}-{d['symbol_X']}···π",
+            round(d["confidence_score"], 2),
+            int(d["R_num"]) + 1,
+            int(d["X_num"]) + 1,
+            _cycle_to_string(d["cycle"]),
+            round(d["X_centroid_distance"], 3),
+            round(d["angle"], 1),
+            round(d["angle_to_normal"], 1)
+        ]
+
+    return Section("X-pi", "R-X···π INTERACTIONS", header, row_func)
+
+
+
 def _n_pi_section() -> Section:
     header = [
         "№", "Type", "Confidence score",
@@ -292,14 +323,14 @@ def _metallophilic_section() -> Section:
 def _carbonyl_section() -> Section:
     header = [
         "№", "Type", "Confidence score",
-        "Donor O", "Acceptor C",
+        "Donor Atom", "Acceptor C",
         "Distance (Å)", "Bürgi–Dunitz angle (°)", "Angle RAC (°)",
     ]
 
     def row_func(d, i):
         return [
             i + 1,
-            "n→π*",
+             f"{d['donor_element']}···C",
             round(d["confidence_score"], 2),
             int(d["donor_atom"]) + 1,
             int(d["acceptor_carbon"]) + 1,
@@ -348,6 +379,14 @@ def _write_section(f, section: Section, rows: list) -> None:
     f.write(table)
     f.write("\n")
 
+def _write_warning(f, warnings: list) -> None:
+    f.write("\n")
+    f.write("$" * 16 + "\n")
+    f.write("SPATIAL WARNINGS" + "\n")
+    f.write("$" * 16 + "\n\n")
+    for warn in warnings:
+        f.write(warn + "\n")
+    f.write("\n")
 
 def _write_quote(f) -> None:
     philosopher, quote = random.choice(quotes)
