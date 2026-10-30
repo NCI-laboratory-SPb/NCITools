@@ -323,14 +323,14 @@ def _metallophilic_section() -> Section:
 def _carbonyl_section() -> Section:
     header = [
         "№", "Type", "Confidence score",
-        "Donor O", "Acceptor C",
+        "Donor Atom", "Acceptor C",
         "Distance (Å)", "Bürgi–Dunitz angle (°)", "Angle RAC (°)",
     ]
 
     def row_func(d, i):
         return [
             i + 1,
-            "n→π*",
+             f"{d['donor_element']}···C",
             round(d["confidence_score"], 2),
             int(d["donor_atom"]) + 1,
             int(d["acceptor_carbon"]) + 1,
