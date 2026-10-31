@@ -19,6 +19,7 @@ from ncitools.geometry.detectors import (
     find_intermetalls_contact,
     find_nci_bonds,
     find_nci_with_aromatic,
+    check_spatial_clashes,
 )
 from ncitools.geometry.graph_builder import build_graph_with_covalent_pairs
 from ncitools.geometry.output import output
@@ -30,4 +31,5 @@ __all__ = [
     "find_carbonyl_interactions",
     "find_intermetalls_contact",
     "output",
+    "check_spatial_clashes",
 ]

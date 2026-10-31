@@ -1,7 +1,10 @@
 """Utility functions for file I/O, geometry, and element symbols."""
 
 import os
-import numpy as np
+
+import networkx as nx
+from .constants import METALS, HALOGENS
+from ase import Atoms
 from ase.io import read
 from ase.io.proteindatabank import read_proteindatabank
 from pathlib import Path
@@ -57,6 +60,59 @@ def read_pdb_normalized(filename):
         tmp_path.unlink(missing_ok=True)
 
     return atoms
+
+
+
+def check_atomic_connectivity(atoms: Atoms, G: nx.Graph) -> list[str]:
+    """Warn if non-noble-gas nonmetals have unusual connectivity."""
+
+    warnings = []
+
+    allowed_connectivity = {
+        "H": {1},
+        "C": {1, 2, 3, 4},
+        "N": {1, 2, 3, 4},
+        "O": {1, 2, 3},
+
+        # Halogens
+        "F": {0, 1},
+        "Cl": {0, 1, 2, 3, 4, 5, 6},
+        "Br": {0, 1, 2, 3, 4, 5, 6},
+        "I": {0, 1, 2, 3, 4, 5, 6, 7},
+    }
+
+    for atom_idx, atom in enumerate(atoms):
+        symbol = atom.symbol
+
+        count = sum(
+            1
+            for nbr in G.neighbors(atom_idx)
+            if not isinstance(nbr, str)
+            and G.edges[atom_idx, nbr].get("bond_type")
+            in ("covalent", "coordination")
+        )
+
+        # All other nonmetals must have at least one neighbour
+        if count == 0 and not (symbol in METALS or symbol in HALOGENS):
+            message = (
+                f"WARNING: {symbol} atom {atom_idx + 1} "
+                "has no covalent or coordination neighbours."
+            )
+            warnings.append(message)
+            continue
+
+        # Check typical connectivity for selected elements
+        if symbol in allowed_connectivity:
+            if count not in allowed_connectivity[symbol]:
+                message = (
+                    f"WARNING: {symbol} atom {atom_idx + 1} "
+                    f"has an unusual number of covalent and/or "
+                    f"coordination neighbours: {count}."
+                )
+                warnings.append(message)
+
+    return warnings
+
 
 
 def get_symbol(z):

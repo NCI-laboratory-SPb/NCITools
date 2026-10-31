@@ -16,22 +16,20 @@ Future releases will add the topological (``top``), quantum-chemical
 from __future__ import annotations
 
 import os
+import click
 from pathlib import Path
 
-import click
-from ase.io import read
-
 from ncitools.constants import BONDI, RADII, CHARRY_TKATCHENKO, BOHR_TO_ANGSTROM
-from ncitools.utils import read_input
+from ncitools.utils import read_input, check_atomic_connectivity
 from ncitools.geometry import (
     build_graph_with_covalent_pairs,
     find_carbonyl_interactions,
     find_intermetalls_contact,
     find_nci_bonds,
     find_nci_with_aromatic,
+    check_spatial_clashes,
     output as geom_output,
 )
-from ncitools.geometry.detectors.clash import check_spatial_clashes
 
 
 # ---------------------------------------------------------------------- #
@@ -203,6 +201,16 @@ def geom(input_file, output, angle_tol_hb, angle_tol, confidence, tolerance, rad
         for warn in spatial_warnings:
             click.echo(f"  {warn}")
         click.echo()
+
+
+    atom_connectivity_warnings = check_atomic_connectivity(atoms, G)
+    if atom_connectivity_warnings:
+        click.echo("\n[!] Atomic connectivity warnings:")
+        for warn in atom_connectivity_warnings:
+            click.echo(f"  {warn}")
+        click.echo()
+
+
 
     # ------------------------------------------------------------------ #
     # Terminal summary and report

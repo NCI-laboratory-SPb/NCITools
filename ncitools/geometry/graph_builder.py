@@ -108,7 +108,6 @@ def build_graph_with_covalent_pairs(
         planarity_tol, homa_threshold, homa_params,
     )
     _assign_coordination_numbers(atoms, G, symbols)
-    _check_hydrogen_connectivity(atoms, G)
 
     return G
 
@@ -325,24 +324,3 @@ def _is_planar_centre(
     distance = np.linalg.norm(center)
 
     return distance <= tolerance
-
-
-def _check_hydrogen_connectivity(atoms: Atoms, G: nx.Graph) -> None:
-    """Warn if any hydrogen is bonded to more or fewer than one heavy atom."""
-    for atom_idx, atom in enumerate(atoms):
-        if atom.symbol != "H":
-            continue
-
-        count = sum(
-            1
-            for nbr in G.neighbors(atom_idx)
-            if not isinstance(nbr, str)
-            and G.edges[atom_idx, nbr].get("bond_type")
-            in ("covalent", "coordination")
-        )
-        if count != 1:
-            print(
-                f"WARNING: hydrogen atom {atom_idx + 1} has a number of "
-                "covalent and/or coordination neighbours different from 1."
-            )
-    return

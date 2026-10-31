@@ -11,10 +11,13 @@ from ncitools.geometry.detectors.aromatic import find_nci_with_aromatic
 from ncitools.geometry.detectors.carbonyl import find_carbonyl_interactions
 from ncitools.geometry.detectors.metallophilic import find_intermetalls_contact
 from ncitools.geometry.detectors.sigma_hole import find_nci_bonds
+from ncitools.geometry.detectors.clash import check_spatial_clashes
+
 
 __all__ = [
     "find_nci_bonds",
     "find_nci_with_aromatic",
     "find_carbonyl_interactions",
     "find_intermetalls_contact",
+    "check_spatial_clashes",
 ]
