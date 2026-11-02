@@ -93,7 +93,12 @@ _INTERACTION_LABELS = {
     "--bohr", is_flag=True, default=False,
     help="Specifying coordinates units. In default, coordinates are assumed in angstroms.",
 )
-def geom(input_file, output, angle_tol_hb, angle_tol, confidence, tolerance, radii, skip, bohr):
+@click.option(
+    "--clash", is_flag=True, default=False,
+    help="Calling a function to search for intersecting or closely spaced bonds.",
+)
+def geom(input_file, output, angle_tol_hb, angle_tol, confidence,
+         tolerance, radii, skip, bohr, clash):
     """
     Detect non-covalent interactions from atomic coordinates only.
 
@@ -193,14 +198,16 @@ def geom(input_file, output, angle_tol_hb, angle_tol, confidence, tolerance, rad
     # ------------------------------------------------------------------ #
     # Spatial clash detection
     # ------------------------------------------------------------------ #
-    spatial_warnings = check_spatial_clashes(
-        atoms, G, clash_threshold = 1.0
-    )
-    if spatial_warnings:
-        click.echo("\n[!] Spatial proximity warnings:")
-        for warn in spatial_warnings:
-            click.echo(f"  {warn}")
-        click.echo()
+    spatial_warnings=[]
+    if clash:
+        spatial_warnings = check_spatial_clashes(
+            atoms, G, clash_threshold = 1.0
+        )
+        if spatial_warnings:
+            click.echo("\n[!] Spatial proximity warnings:")
+            for warn in spatial_warnings:
+                click.echo(f"  {warn}")
+            click.echo()
 
     atom_connectivity_warnings = check_atomic_connectivity(atoms, G)
     if atom_connectivity_warnings:
