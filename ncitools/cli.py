@@ -196,25 +196,30 @@ def geom(input_file, output, angle_tol_hb, angle_tol, confidence,
         )
 
     # ------------------------------------------------------------------ #
-    # Spatial clash detection
+    # Warning detection
     # ------------------------------------------------------------------ #
+    atom_connectivity_warnings = check_atomic_connectivity(atoms, G)
+    if atom_connectivity_warnings:
+        click.echo(click.style("\n[!] Your structure has several "
+                               "atoms with an unusual number of neighbours:",
+                               fg="red"))
+        click.echo("The atomic connectivity warnings report is written in "
+                       f"the file {output}_warnings.nci")
+        click.echo()
+
+
     spatial_warnings=[]
     if clash:
         spatial_warnings = check_spatial_clashes(
             atoms, G, clash_threshold = 1.0
         )
         if spatial_warnings:
-            click.echo("\n[!] Spatial proximity warnings:")
-            for warn in spatial_warnings:
-                click.echo(f"  {warn}")
+            click.echo(click.style("\n[!] Your structure has several "
+                                    "close spatial or intersecting bonds:",
+                                    fg="yellow"))
+            click.echo(f"The spatial proximity warning report is written in "
+                       f"the file {output}_warnings.nci")
             click.echo()
-
-    atom_connectivity_warnings = check_atomic_connectivity(atoms, G)
-    if atom_connectivity_warnings:
-        click.echo("\n[!] Atomic connectivity warnings:")
-        for warn in atom_connectivity_warnings:
-            click.echo(f"  {warn}")
-        click.echo()
 
 
 
@@ -224,7 +229,9 @@ def geom(input_file, output, angle_tol_hb, angle_tol, confidence,
     _print_summary(G)
 
     ext = os.path.splitext(input_file)[1]
-    geom_output(G, filename=output, ext=ext, warnings=spatial_warnings)
+    geom_output(G, filename=output, ext=ext,
+                connect_warnings=atom_connectivity_warnings,
+                spatial_warnings=spatial_warnings)
     click.echo(f"Report written to {output}.nci!\n\n Buy developer a coffee")
 
 
