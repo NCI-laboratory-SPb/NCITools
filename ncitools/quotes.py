@@ -426,4 +426,8 @@ quotes = [
     ("Elena Tupikina", "Report information."),
     ("Elena Tupikina", "Burn a girl? Suck it up."),
 
+    ("Richard Bader", "ITS THE PHYSICS!!"),
+
+    ("Semyon Egorov", "If you don’t know physics, everything seems like chemistry"),
+
 ]
