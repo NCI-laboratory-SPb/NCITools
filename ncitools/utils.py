@@ -20,9 +20,11 @@ def read_input(file):
     if ext == ".pdb":
         try:
             atoms = read_proteindatabank(file)
+            atoms.set_pbc(False)
             return atoms
         except KeyError:
             atoms = read_pdb_normalized(file)
+            atoms.set_pbc(False)
             return atoms
     else:
         atoms = read(file)
@@ -64,36 +66,43 @@ def read_pdb_normalized(filename):
 
 
 def check_atomic_connectivity(atoms: Atoms, G: nx.Graph) -> list[str]:
-    """Warn if non-noble-gas nonmetals have unusual connectivity."""
+    """Warn if nonmetals have unusual connectivity."""
 
     warnings = []
 
-    allowed_connectivity = {
-        "H": {1},
-        "C": {1, 2, 3, 4},
-        "N": {1, 2, 3, 4},
-        "O": {1, 2, 3},
+    max_covalent_connectivity = {
+        "H": 1, "He": 0,
+        "B": 4, "C": 4, "N": 4, "O": 2, "F": 1, "Ne": 0,
+        "Si": 6, "P": 6, "S": 6, "Cl": 6, "Ar": 0,
+        "As": 6, "Se": 6, "Br": 6,
+        "Sb": 6, "Te": 6, "I": 7,
 
-        # Halogens
-        "F": {0, 1},
-        "Cl": {0, 1, 2, 3, 4, 5, 6},
-        "Br": {0, 1, 2, 3, 4, 5, 6},
-        "I": {0, 1, 2, 3, 4, 5, 6, 7},
-    }
+ }
 
     for atom_idx, atom in enumerate(atoms):
         symbol = atom.symbol
 
-        count = sum(
+        count_covalent = sum(
             1
             for nbr in G.neighbors(atom_idx)
             if not isinstance(nbr, str)
             and G.edges[atom_idx, nbr].get("bond_type")
-            in ("covalent", "coordination")
+            == "covalent"
         )
 
+        count_coordination = sum(
+            1
+            for nbr in G.neighbors(atom_idx)
+            if not isinstance(nbr, str)
+            and G.edges[atom_idx, nbr].get("bond_type")
+            == "coordination"
+        )
+
+        count = count_covalent + count_coordination
+
         # All other nonmetals must have at least one neighbour
-        if count == 0 and not (symbol in METALS or symbol in HALOGENS):
+        if count == 0 and symbol in ("H", "B", "C", "N", "O", "Si",
+                                     "P", "S", "As", "Se", "Sb", "Te"):
             message = (
                 f"WARNING: {symbol} atom {atom_idx + 1} "
                 "has no covalent or coordination neighbours."
@@ -102,12 +111,11 @@ def check_atomic_connectivity(atoms: Atoms, G: nx.Graph) -> list[str]:
             continue
 
         # Check typical connectivity for selected elements
-        if symbol in allowed_connectivity:
-            if count not in allowed_connectivity[symbol]:
+        if symbol in max_covalent_connectivity:
+            if count_covalent > max_covalent_connectivity[symbol]:
                 message = (
                     f"WARNING: {symbol} atom {atom_idx + 1} "
-                    f"has an unusual number of covalent and/or "
-                    f"coordination neighbours: {count}."
+                    f"has an unusual number of covalent neighbours: {count}."
                 )
                 warnings.append(message)
 
