@@ -202,7 +202,6 @@ def geom(input_file, output, angle_tol_hb, angle_tol, confidence, tolerance, rad
             click.echo(f"  {warn}")
         click.echo()
 
-
     atom_connectivity_warnings = check_atomic_connectivity(atoms, G)
     if atom_connectivity_warnings:
         click.echo("\n[!] Atomic connectivity warnings:")
