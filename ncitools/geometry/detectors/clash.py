@@ -78,7 +78,7 @@ def _segment_distance(
 def check_spatial_clashes(
         atoms: Atoms,
         G: nx.Graph,
-        clash_threshold: float = 1.0
+        clash_threshold: float = 0.9
 ) -> list[str]:
     """
     Identify independent edges (covalent, coordination, or non-covalent)

@@ -57,7 +57,8 @@ def output(
     ext: str = ".default",
     correlation_hb=universal_1_hb,
     correlation_sb=universal_1_sb,
-    warnings: list[str] = None
+    connect_warnings: list[str] = None,
+    spatial_warnings: list[str] = None
 ) -> None:
     """
     Write a formatted ``.nci`` report summarising all detected interactions.
@@ -74,8 +75,12 @@ def output(
         report header.
     correlation_hb, correlation_sb
         Empirical correlations used to convert geometries into energies.
-    warnings : list[str], optional
+    connect_warnings : list[str]
+         Atoms with an unusual number of covalent neighbors.
+         These warnings are written to ``f"{filename}_warnings.nci"``.
+    spatial_warnings : list[str], optional
         Spatial clashes and undesirable intersections of bonds
+        These warnings are written to ``f"{filename}_warnings.nci"``.
     """
     edges_by_type = _group_edges_by_type(G)
     sections = _build_sections(correlation_hb, correlation_sb)
@@ -93,8 +98,16 @@ def output(
             if rows:
                 _write_section(f, section, rows)
 
-        if warnings:
-            _write_warning(f, warnings)
+        if connect_warnings or spatial_warnings:
+            with open(f"{filename}_warnings.nci", "w", encoding="utf-8") as warn:
+                warn.write("=" * 155 + "\n")
+                warn.write("CHECK YOUR STRUCTURE. IT HAS:" + "\n")
+                warn.write("=" * 155 + "\n")
+                warn.write("\n")
+                if connect_warnings:
+                    _write_warning(warn, connect_warnings)
+                if spatial_warnings:
+                    _write_warning(warn, spatial_warnings)
 
         _recommended_citings(f)
         _write_quote(f)
@@ -380,10 +393,6 @@ def _write_section(f, section: Section, rows: list) -> None:
     f.write("\n")
 
 def _write_warning(f, warnings: list) -> None:
-    f.write("\n")
-    f.write("$" * 16 + "\n")
-    f.write("SPATIAL WARNINGS" + "\n")
-    f.write("$" * 16 + "\n\n")
     for warn in warnings:
         f.write(warn + "\n")
     f.write("\n")
