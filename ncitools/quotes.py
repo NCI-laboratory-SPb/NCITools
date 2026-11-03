@@ -424,6 +424,9 @@ quotes = [
     ("Elena Tupikina", "[Profanity]"),
     ("Elena Tupikina", "We need to do something about this."),
     ("Elena Tupikina", "Report information."),
-    ("Elena Tupikina", "Burn a girl? Suck it up."),
+    ("Elena Tupikina", "Born a girl? Suck it up."),
 
+    ("Richard Bader", "ITS THE PHYSICS!!"),
+    ("Semyon Egorov", "If you don’t know physics, everything seems like chemistry"),
+    ("Daniel Keyes", "When I waked up this morning rite away I thot I was gone to be smart but Im not"),
 ]

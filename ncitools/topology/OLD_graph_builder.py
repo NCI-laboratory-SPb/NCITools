@@ -12,9 +12,9 @@ from numpy.linalg import norm
 from scipy.spatial import cKDTree
 from tqdm import tqdm
 
-from ncitools.constants import bohr_to_angstrom, BONDI
+from ncitools.constants import BOHR_TO_ANGSTROM, ANGSTROM_TO_BOHR, BONDI
 from ncitools.utils import get_symbol
-from .topology import _angle, _bcp_properties, ANGSTROM_TO_BOHR
+from .topology import _angle, _bcp_properties
 
 
 # ----------------------------------------------------------------------------
