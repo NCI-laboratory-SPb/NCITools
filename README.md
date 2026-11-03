@@ -35,6 +35,7 @@ For every structure NCITools detects:
 *   **π···π stacking** between aromatic rings
 *   **X–H···π contacts**
 *   **Lone-pair···π (n···π) contacts**
+*   **Halogen···π contacts** between halogen σ-hole and aromatic ring
 *   **Ion···π contacts**
 *   **Metallophilic-like contacts** (Au, Ag, Cu, Hg, Ir, Pt, Pd, Ni)
 *   **Carbonyl n→π\* contacts** (Bürgi–Dunitz geometry)
@@ -141,6 +142,7 @@ ncitools geom complex.pdb \
     --confidence 0.8 \     # Confidence score threshold
     --radii bondi \        # Van der Waals radii set
     -o complex_analysis    # Output file name
+    --clash                # Flag to search for steric clashes
 ```
 
 `ncitools geom --help` lists everything.
@@ -194,6 +196,41 @@ Columns for other families can be interpreted in the same fashion.
 
 ---
 
+## Structure Validation and Warnings
+
+NCITools automatically checks your structure for potential chemical and geometrical anomalies. If any issues are detected, a report is generated and saved in a separate file named `my_structure_warnings.nci`.
+
+**1. Atomic Connectivity (Valence)**
+
+By default, the script checks the covalent graph for atoms exhibiting an unusual number of neighbours (e.g., a carbon atom with 5 covalent bonds or hydrogen with 2). This helps identify poorly optimized geometries or incorrect Van der Waals radii settings.
+
+The terminal output will look like this:
+
+```
+[!]Your structure has several atoms with an unusual number of neighbours:
+The atomic connectivity warnings report is written in the file my_structure_warnings.nci
+```
+
+**2. Spatial Clashes (`--clash`)**
+
+NCITools can perform an analysis to detect physically impossible overlaps, such as intersecting chemical bonds or steric clashes.
+If you are confident in your structure, you can skip the recommendation below and warnings in the file.
+
+<u> Because this mathematical calculation is computationally intensive, it is turned off by default.</u>
+
+<span style="color: orange;">**Recommendation:** We highly recommend running your structure with the `--clash` flag at least once before analyzing the NCI results to ensure your input geometry is physically valid.</span>
+
+The terminal output will look like this:
+
+```
+[!] Your structure has several close spatial or intersecting bonds:
+The spatial proximity warnings report is written in the file my_structure_warnings.nci
+```
+
+* File `my_structure_warnings.nci` only provides information about possible anomalies in your structure, but it does not affect further NCITools analysis in any way.
+
+---
+
 ## Package layout
 
 ```
@@ -211,8 +248,9 @@ ncitools/
     └── detectors/
         ├── _common.py        # shared acceptor-angle rules
         ├── sigma_hole.py     # HB, XB, ChB, PnB, TetB
-        ├── aromatic.py       # π···π, H···π, n···π, ion···π
+        ├── aromatic.py       # π···π, H···π, n···π, ion···π, X···π
         ├── carbonyl.py       # n→π* with carbonyls
+        ├── clash.py          # detecting close contacts in space
         └── metallophilic.py  # metal···metal contacts
 ```
 
