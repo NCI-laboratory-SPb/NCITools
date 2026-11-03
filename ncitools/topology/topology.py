@@ -15,10 +15,10 @@ from scipy.ndimage import spline_filter
 from scipy.spatial import cKDTree
 from tqdm import tqdm
 
-from ncitools.constants import bohr_to_angstrom, RADII, BONDI
+from ncitools.constants import RADII, BONDI, ANGSTROM_TO_BOHR, BOHR_TO_ANGSTROM
 from ncitools.utils import get_symbol
 
-ANGSTROM_TO_BOHR: float = 1.0 / bohr_to_angstrom
+
 
 
 # ----------------------------------------------------------------------------
@@ -891,7 +891,7 @@ def classify_covalent_like(
     j = int(bcp["atom2"])
     symbol_i = get_symbol(atoms[i][0])
     symbol_j = get_symbol(atoms[j][0])
-    distance_angstrom = bcp["pair_distance"] * bohr_to_angstrom
+    distance_angstrom = bcp["pair_distance"] * BOHR_TO_ANGSTROM
     cutoff = bond_cutoff_angstrom(symbol_i, symbol_j, scale=covalent_scale)
 
     if bcp["rho"] < rho_threshold:
