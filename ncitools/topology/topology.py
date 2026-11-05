@@ -33,7 +33,7 @@ def covalent_radius(symbol: str) -> float:
 def bond_cutoff_angstrom(
     symbol1: str,
     symbol2: str,
-    scale: float = 1.25,
+    bias: float = 0.2,
 ) -> float:
     """
     Maximum distance used for a geometry-based covalent assignment.
@@ -41,7 +41,7 @@ def bond_cutoff_angstrom(
     The value is deliberately somewhat generous because the purpose
     is screening, not rigorous bond-order determination.
     """
-    return scale * (covalent_radius(symbol1) + covalent_radius(symbol2))
+    return bias + covalent_radius(symbol1) + covalent_radius(symbol2)
 
 
 # ----------------------------------------------------------------------------
