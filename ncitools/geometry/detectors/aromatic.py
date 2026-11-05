@@ -39,6 +39,7 @@ def find_nci_with_aromatic(
     pi_cloud_radii: float = 3.0,
     cutoff_ion_pi: float = 5.0,
     angle_ion_pi_threshold: float = 30.0,
+    angle_x_pi_threshold: float = 150.0,
     confidence_threshold: float = 0.8,
 ) -> nx.Graph:
     """
@@ -68,6 +69,8 @@ def find_nci_with_aromatic(
         Maximum ion–centroid distance for ion···π (Å).
     angle_ion_pi_threshold : float
         Maximum angle between ion–centroid vector and ring normal.
+    angle_x_pi_threshold : float
+        Minimum R–X···π angle in degrees.
     confidence_threshold : float
         Minimum product of soft scores required to accept an interaction.
 
@@ -106,6 +109,11 @@ def find_nci_with_aromatic(
     _find_ion_pi(
         atoms, G, cycles,
         cutoff_ion_pi, angle_ion_pi_threshold,
+        confidence_threshold,
+    )
+    _find_X_pi(
+        atoms, G, cycles, radii,
+        angle_x_pi_threshold, pi_cloud_radii,
         confidence_threshold,
     )
 
@@ -404,4 +412,91 @@ def _find_ion_pi(
                 confidence_score=float(total),
             )
 
+
+
+
+# --------------------------------------------------------------------------- #
+#  Halogen···π
+# --------------------------------------------------------------------------- #
+
+def _find_X_pi(
+    atoms: Atoms,
+    G: nx.Graph,
+    cycles,
+    radii: dict,
+    angle_threshold: float,
+    pi_cloud_radii: float,
+    confidence_threshold: float,
+) -> None:
+    """Add R-X···π edges between halogens and aromatic centres."""
+    symbols = atoms.get_chemical_symbols()
+    positions = atoms.positions
+
+    halogen_indices = [i for i, s in enumerate(symbols) if s in ["Cl", "Br", "I"]]
+
+    for Hal in tqdm(halogen_indices, desc="Searching for R-X···π interactions"):
+        neighbours = [
+            n for n in G.adj[Hal]
+            if not isinstance(n, str)
+            and G.edges[Hal, n]["bond_type"] in ("covalent", "coordination")
+        ]
+        # checking for halogen-ion
+        if len(neighbours) != 1:
+            continue
+
+        r = neighbours[0]
+        r_symbol = symbols[r]
+
+        X = positions[Hal]
+        R = positions[r]
+        vdw_X = vdw_radius(symbols[Hal], radii)
+        cutoff = pi_cloud_radii + vdw_X
+
+        for ring_node, ring in cycles:
+            # checking for interaction with a linked ring
+            if Hal in ring["cycle"] or r in ring["cycle"]:
+                continue
+
+            centre = ring["position"]
+            normal = ring["normal"]
+
+            x_centroid = float(np.linalg.norm(X - centre))
+            score_dist = soft_less(x_centroid, cutoff)
+            if score_dist < 0.01:
+                continue
+
+            # normal-centroid···X angle
+            vec = centre - X
+            angle_to_normal = float(np.degrees(np.arccos(np.clip(
+                abs(np.dot(vec, normal)) / np.linalg.norm(vec),
+                0.0, 1.0
+            ))))
+            score_angle_normal = soft_less(angle_to_normal, 45.0)
+
+            # R-X···centroid angle
+            v1 = R - X
+            v2 = centre - X
+            angle = float(np.degrees(np.arccos(np.clip(
+                np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2)),
+                -1.0, 1.0
+            ))))
+            score_angle = soft_greater(angle, angle_threshold)
+
+            total = score_dist * score_angle * score_angle_normal
+            if total < confidence_threshold:
+                continue
+
+            G.add_edge(
+                Hal, ring_node,
+                bond_type="X-pi",
+                R_num=r,
+                X_num=Hal,
+                symbol_X=symbols[Hal],
+                symbol_R=r_symbol,
+                X_centroid_distance=x_centroid,
+                cycle=ring["cycle"],
+                angle=angle,
+                angle_to_normal=angle_to_normal,
+                confidence_score=float(total),
+            )
 

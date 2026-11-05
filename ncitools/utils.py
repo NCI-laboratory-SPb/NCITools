@@ -1,9 +1,14 @@
 """Utility functions for file I/O, geometry, and element symbols."""
 
 import os
-import numpy as np
+
+import networkx as nx
+from .constants import METALS, HALOGENS
+from ase import Atoms
 from ase.io import read
 from ase.io.proteindatabank import read_proteindatabank
+from pathlib import Path
+import tempfile
 
 def read_input(file):
     """Read molecular structure file (PDB or other ASE formats).
@@ -13,11 +18,109 @@ def read_input(file):
     ext = os.path.splitext(file)[1]
 
     if ext == ".pdb":
-        pdb_file = read_proteindatabank(file)
-        return pdb_file
+        try:
+            atoms = read_proteindatabank(file)
+            atoms.set_pbc(False)
+            return atoms
+        except KeyError:
+            atoms = read_pdb_normalized(file)
+            atoms.set_pbc(False)
+            return atoms
     else:
-        in_file = read(file)
-        return in_file
+        atoms = read(file)
+        return atoms
+
+def read_pdb_normalized(filename):
+    filename = Path(filename)
+
+    with open(filename, "r") as f:
+        lines = f.readlines()
+
+    fixed_lines = []
+
+    for line in lines:
+        if line.startswith(("ATOM  ", "HETATM")) and len(line) >= 78:
+            element = line[76:78].strip().upper()
+
+            if element == "D":
+                line = line[:76] + " H" + line[78:]
+
+        fixed_lines.append(line)
+
+    # Temporal copy of loaded PDB
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".pdb",
+        delete=False
+    ) as tmp:
+        tmp.writelines(fixed_lines)
+        tmp_path = Path(tmp.name)
+
+    try:
+        atoms = read_proteindatabank(str(tmp_path))
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    return atoms
+
+
+
+def check_atomic_connectivity(atoms: Atoms, G: nx.Graph) -> list[str]:
+    """Warn if nonmetals have unusual connectivity."""
+
+    warnings = []
+
+    max_covalent_connectivity = {
+        "H": 1, "He": 0,
+        "B": 4, "C": 4, "N": 4, "O": 2, "F": 1, "Ne": 0,
+        "Si": 6, "P": 6, "S": 6, "Cl": 6, "Ar": 0,
+        "As": 6, "Se": 6, "Br": 6,
+        "Sb": 6, "Te": 6, "I": 7,
+
+ }
+
+    for atom_idx, atom in enumerate(atoms):
+        symbol = atom.symbol
+
+        count_covalent = sum(
+            1
+            for nbr in G.neighbors(atom_idx)
+            if not isinstance(nbr, str)
+            and G.edges[atom_idx, nbr].get("bond_type")
+            == "covalent"
+        )
+
+        count_coordination = sum(
+            1
+            for nbr in G.neighbors(atom_idx)
+            if not isinstance(nbr, str)
+            and G.edges[atom_idx, nbr].get("bond_type")
+            == "coordination"
+        )
+
+        count = count_covalent + count_coordination
+
+        # All other nonmetals must have at least one neighbour
+        if count == 0 and symbol in ("H", "B", "C", "N", "O", "Si",
+                                     "P", "S", "As", "Se", "Sb", "Te"):
+            message = (
+                f"WARNING: {symbol} atom {atom_idx + 1} "
+                "has no covalent or coordination neighbours."
+            )
+            warnings.append(message)
+            continue
+
+        # Check typical connectivity for selected elements
+        if symbol in max_covalent_connectivity:
+            if count_covalent > max_covalent_connectivity[symbol]:
+                message = (
+                    f"WARNING: {symbol} atom {atom_idx + 1} "
+                    f"has an unusual number of covalent neighbours: {count}."
+                )
+                warnings.append(message)
+
+    return warnings
+
 
 
 def get_symbol(z):

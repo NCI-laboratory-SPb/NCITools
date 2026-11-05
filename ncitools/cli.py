@@ -16,19 +16,18 @@ Future releases will add the topological (``top``), quantum-chemical
 from __future__ import annotations
 
 import os
+import click
 from pathlib import Path
 
-import click
-from ase.io import read
-
 from ncitools.constants import BONDI, RADII, CHARRY_TKATCHENKO, BOHR_TO_ANGSTROM
-from ncitools.utils import read_input
+from ncitools.utils import read_input, check_atomic_connectivity
 from ncitools.geometry import (
     build_graph_with_covalent_pairs,
     find_carbonyl_interactions,
     find_intermetalls_contact,
     find_nci_bonds,
     find_nci_with_aromatic,
+    check_spatial_clashes,
     output as geom_output,
 )
 
@@ -45,6 +44,7 @@ _INTERACTION_LABELS = {
     "TetB":          "Tetrel bonds",
     "stacking":      "π···π stacking",
     "H-pi":          "X–H···π",
+    "X-pi":          "R-X···π",
     "n-pi":          "Lone pair···π",
     "ion-pi":        "Ion···π",
     "metallophilic": "Metallophilic",
@@ -93,7 +93,12 @@ _INTERACTION_LABELS = {
     "--bohr", is_flag=True, default=False,
     help="Specifying coordinates units. In default, coordinates are assumed in angstroms.",
 )
-def geom(input_file, output, angle_tol_hb, angle_tol, confidence, tolerance, radii, skip, bohr):
+@click.option(
+    "--clash", is_flag=True, default=False,
+    help="Calling a function to search for intersecting or closely spaced bonds.",
+)
+def geom(input_file, output, angle_tol_hb, angle_tol, confidence,
+         tolerance, radii, skip, bohr, clash):
     """
     Detect non-covalent interactions from atomic coordinates only.
 
@@ -170,7 +175,7 @@ def geom(input_file, output, angle_tol_hb, angle_tol, confidence, tolerance, rad
             confidence_threshold=confidence,
         )
 
-    aromatic_family = {"stacking", "H-pi", "n-pi", "ion-pi"}
+    aromatic_family = {"stacking", "H-pi", "X-pi", "n-pi", "ion-pi"}
     if not aromatic_family.issubset(skipped):
         G = find_nci_with_aromatic(
             atoms, G,
@@ -191,18 +196,49 @@ def geom(input_file, output, angle_tol_hb, angle_tol, confidence, tolerance, rad
         )
 
     # ------------------------------------------------------------------ #
+    # Warning detection
+    # ------------------------------------------------------------------ #
+    atom_connectivity_warnings = check_atomic_connectivity(atoms, G)
+    if atom_connectivity_warnings:
+        click.echo(click.style("\n[!] Your structure has several "
+                               "atoms with an unusual number of neighbours:",
+                               fg="red"))
+        click.echo("The atomic connectivity warnings report is written in "
+                       f"the file {output}_warnings.nci")
+        click.echo()
+
+
+    spatial_warnings=[]
+    if clash:
+        spatial_warnings = check_spatial_clashes(
+            atoms, G, clash_threshold = 1.0
+        )
+        if spatial_warnings:
+            click.echo(click.style("\n[!] Your structure has several "
+                                    "close spatial or intersecting bonds:",
+                                    fg="yellow"))
+            click.echo(f"The spatial proximity warning report is written in "
+                       f"the file {output}_warnings.nci")
+            click.echo()
+
+
+
+    # ------------------------------------------------------------------ #
     # Terminal summary and report
     # ------------------------------------------------------------------ #
     _print_summary(G)
 
     ext = os.path.splitext(input_file)[1]
-    geom_output(G, filename=output, ext=ext)
+    geom_output(G, filename=output, ext=ext,
+                connect_warnings=atom_connectivity_warnings,
+                spatial_warnings=spatial_warnings)
     click.echo(f"Report written to {output}.nci!\n\n Buy developer a coffee")
 
 
 # ---------------------------------------------------------------------- #
 #  Helpers
 # ---------------------------------------------------------------------- #
+
 
 def _count_edges(G, bond_type: str) -> int:
     """Number of edges of a given ``bond_type``."""
@@ -243,7 +279,7 @@ def _print_summary(G) -> None:
 # ---------------------------------------------------------------------- #
 
 @click.group()
-@click.version_option(version="0.1.0", prog_name="ncitools")
+@click.version_option(version="0.2.0", prog_name="ncitools")
 def cli():
     """
     NCITools — analysis of non-covalent interactions.
