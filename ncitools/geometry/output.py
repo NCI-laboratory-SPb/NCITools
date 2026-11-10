@@ -412,10 +412,11 @@ def _write_quote(f) -> None:
 
 
 def _recommended_citings(f):
-    f.write("\n\n")
-    f.write("*" * 32 + '\n')
-    f.write("SUGGESTED CITATIONS FOR THIS RUN\n")
-    f.write("*" * 32 + '\n\n')
 
-    for index, cite in enumerate(CITINGS):
-        f.write(f'{index + 1}. {cite}\n')
+    if CITINGS:
+        f.write("\n\n")
+        f.write("*" * 32 + '\n')
+        f.write("SUGGESTED CITATIONS FOR THIS RUN\n")
+        f.write("*" * 32 + '\n\n')
+        for index, cite in enumerate(CITINGS):
+            f.write(f'{index + 1}. {cite}\n')

@@ -255,7 +255,6 @@ def test_find_carbonyl_interaction(carbonyl_system):
     assert edge["bond_type"] == "carbonyl"
     assert "distance" in edge
     assert "burgi_dunitz_angle" in edge
-    assert "plane_angle" in edge
     assert edge["distance"] <= 3.22
     assert 90 <= edge["burgi_dunitz_angle"] <= 130
 

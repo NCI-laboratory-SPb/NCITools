@@ -279,7 +279,7 @@ def _print_summary(G) -> None:
 # ---------------------------------------------------------------------- #
 
 @click.group()
-@click.version_option(version="1.0.0", prog_name="ncitools")
+@click.version_option(version="0.2.0", prog_name="ncitools")
 def cli():
     """
     NCITools — analysis of non-covalent interactions.
