@@ -10,7 +10,7 @@ from concurrent.futures import ProcessPoolExecutor
 from typing import List, Tuple, Optional, Dict, Any
 
 import numpy as np
-from numpy.linalg import eigvalsh, norm, solve
+from numpy.linalg import eigh, norm, solve
 from scipy.ndimage import spline_filter
 from scipy.spatial import cKDTree
 from tqdm import tqdm
@@ -447,13 +447,73 @@ def _angle(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> Optional[float]:
     return float(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
 
 
+# ----------------------------------------------------------------------------
+# Hessian alignment
+# ----------------------------------------------------------------------------
+
+def positive_hessian_eigenvector(
+    hessian: np.ndarray,
+    eig_tol: float = 1.0e-8,
+) -> Optional[np.ndarray]:
+    """
+    Return the eigenvector of the single positive Hessian eigenvalue.
+
+    At a (3,-1) critical point the Hessian eigenvalues, sorted in
+    ascending order, are ``lambda1 <= lambda2 < 0 < lambda3``.  The
+    eigenvector belonging to ``lambda3`` points along the bond path,
+    i.e. it is the direction that should be collinear with A-B.
+
+    Returns ``None`` when the Hessian does not have exactly one clearly
+    positive and two clearly negative eigenvalues.
+    """
+    eigs, vecs = eigh(np.asarray(hessian, dtype=float))
+    if eigs.size != 3:
+        raise ValueError("Hessian must be three-dimensional.")
+    if eigs[2] <= eig_tol or eigs[1] >= -eig_tol:
+        return None
+    return vecs[:, 2].copy()
+
+
+def pair_alignment_cosine(
+    a: np.ndarray,
+    b: np.ndarray,
+    eigenvector: Optional[np.ndarray],
+) -> Optional[float]:
+    """
+    Absolute cosine between the A-B direction and a Hessian eigenvector.
+
+    The sign of an eigenvector is arbitrary, so ``abs`` is used to keep
+    the result in ``[0, 1]``: 0 means perpendicular, 1 means collinear.
+    Returns ``None`` for degenerate input (zero-length A-B or vector).
+    """
+    if eigenvector is None:
+        return None
+    ab = np.asarray(b, dtype=float) - np.asarray(a, dtype=float)
+    vec = np.asarray(eigenvector, dtype=float)
+    ab_norm = norm(ab)
+    vec_norm = norm(vec)
+    if ab_norm <= 1.0e-12 or vec_norm <= 1.0e-12:
+        return None
+    cosine = abs(float(np.dot(ab / ab_norm, vec / vec_norm)))
+    return float(np.clip(cosine, 0.0, 1.0))
+
+
 def pair_geometry(
     r: np.ndarray,
     a: np.ndarray,
     b: np.ndarray,
+    eigenvector: Optional[np.ndarray] = None,
 ) -> Optional[Dict[str, float]]:
     """
     Calculate geometry of point r relative to atom pair A-B.
+
+    Parameters
+    ----------
+    r, a, b
+        Cartesian positions in the same units (Bohr internally).
+    eigenvector
+        Optional eigenvector of the positive Hessian eigenvalue at r.
+        When supplied, the alignment cosine is added to the result.
 
     Returns
     -------
@@ -465,6 +525,7 @@ def pair_geometry(
         projection
         line_distance
         projection_fraction
+        alignment       (``None`` when no eigenvector was supplied)
     """
     r = np.asarray(r, dtype=float)
     a = np.asarray(a, dtype=float)
@@ -482,6 +543,7 @@ def pair_geometry(
     line_distance = norm(r - closest)
     fraction = projection / d
     angle = _angle(a, r, b)
+    alignment = pair_alignment_cosine(a, b, eigenvector)
 
     return {
         "distance_a": norm(r - a),
@@ -491,6 +553,7 @@ def pair_geometry(
         "projection": projection,
         "projection_fraction": fraction,
         "line_distance": line_distance,
+        "alignment": alignment,
     }
 
 
@@ -499,12 +562,18 @@ def valid_bcp_pair_geometry(
     min_angle: float = 140.0,
     projection_margin: float = 0.20,
     max_line_fraction: float = 0.35,
+    min_alignment: Optional[float] = None,
 ) -> bool:
     """
     Decide whether a CP is geometrically associated with A-B.
 
     This is deliberately permissive enough to allow curved/anisotropic
     density paths, but rejects obviously unrelated stationary points.
+
+    ``min_alignment`` is an optional additional filter on the cosine
+    between the A-B direction and the positive Hessian eigenvector.
+    It is disabled by default to keep the pure-proximity behaviour;
+    the BCP search pipeline enables it explicitly.
     """
     if geometry is None:
         return False
@@ -517,6 +586,10 @@ def valid_bcp_pair_geometry(
         return False
     if geometry["line_distance"] > max_line_fraction * geometry["atom_distance"]:
         return False
+    if min_alignment is not None:
+        alignment = geometry.get("alignment")
+        if alignment is None or alignment < min_alignment:
+            return False
     return True
 
 
@@ -549,7 +622,9 @@ def newton_stationary_point(
     Returns
     -------
     dict or None
-        Contains position, gradient norm, iterations, eigenvalues.
+        Contains position, gradient norm, iterations, eigenvalues and
+        the corresponding eigenvectors (columns, ascending eigenvalue
+        order).
     """
     r = np.asarray(r0, dtype=float).copy()
     best_r = None
@@ -570,7 +645,7 @@ def newton_stationary_point(
             return None
 
         if gnorm <= grad_tol:
-            eigs = eigvalsh(hess)
+            eigs, vecs = eigh(hess)
             return {
                 "position": r.copy(),
                 "rho": float(rho),
@@ -578,6 +653,7 @@ def newton_stationary_point(
                 "grad_norm": float(gnorm),
                 "hessian": hess.copy(),
                 "eigenvalues": eigs,
+                "eigenvectors": vecs,
                 "iterations": iteration + 1,
             }
 
@@ -659,19 +735,27 @@ def _search_pair_worker(args: Tuple[int, int, np.ndarray, np.ndarray, Dict]) -> 
     if result is None:
         return []
 
-    geometry = pair_geometry(result["position"], a, b)
+    eigs = result["eigenvalues"]
+    rank, signature, cp_type = classify_hessian(eigs, eig_tol=settings["eig_tol"])
+    if cp_type != "(3,-1)":
+        return []
+
+    # The eigenvector of the single positive eigenvalue points along
+    # the bond path and should be collinear with A-B.
+    eigenvectors = result.get("eigenvectors")
+    eigenvector = eigenvectors[:, 2].copy() if eigenvectors is not None else None
+
+    geometry = pair_geometry(result["position"], a, b, eigenvector=eigenvector)
     if not valid_bcp_pair_geometry(
         geometry,
         min_angle=settings["min_bcp_angle"],
         projection_margin=settings["projection_margin"],
         max_line_fraction=settings["max_line_fraction"],
+        min_alignment=settings.get("min_alignment"),
     ):
         return []
 
-    eigs = result["eigenvalues"]
-    rank, signature, cp_type = classify_hessian(eigs, eig_tol=settings["eig_tol"])
-    if cp_type != "(3,-1)":
-        return []
+    alignment = geometry["alignment"]
 
     candidate = {
         "position": result["position"].copy(),
@@ -688,6 +772,7 @@ def _search_pair_worker(args: Tuple[int, int, np.ndarray, np.ndarray, Dict]) -> 
         "projection_fraction": float(geometry["projection_fraction"]),
         "distance_a": float(geometry["distance_a"]),
         "distance_b": float(geometry["distance_b"]),
+        "alignment": (None if alignment is None else float(alignment)),
     }
     return [candidate]
 
@@ -696,15 +781,25 @@ def _search_pair_worker(args: Tuple[int, int, np.ndarray, np.ndarray, Dict]) -> 
 # Global BCP deduplication
 # ----------------------------------------------------------------------------
 
-def _compute_bcp_score(bcp: Dict) -> float:
+def _compute_bcp_score(bcp: Dict) -> Tuple[float, float]:
     """
-    Compute a geometry score for a BCP candidate.
-    Lower is better.
+    Lexicographic ranking key for a BCP candidate. Lower is better.
+
+    The primary component is ``1 - alignment`` so that the
+    eigenvector/atom-pair alignment dominates the choice.  The secondary
+    component is the unchanged geometric proximity score: distance,
+    angle, line and projection penalties.
     """
+    alignment = bcp.get("alignment")
+    alignment_penalty = (
+        1.0 if alignment is None
+        else 1.0 - float(np.clip(alignment, 0.0, 1.0))
+    )
+
     distance_penalty = bcp["distance_a"] + bcp["distance_b"]
     angle = bcp["pair_angle"]
     if angle is None:
-        return float("inf")
+        return (alignment_penalty, float("inf"))
     angle_penalty = (180.0 - angle) / 40.0
     line_penalty = bcp["line_distance"] / max(bcp["pair_distance"], 1.0e-8)
     proj = bcp["projection_fraction"]
@@ -713,7 +808,11 @@ def _compute_bcp_score(bcp: Dict) -> float:
         proj_penalty += abs(proj)
     elif proj > 1.0:
         proj_penalty += proj - 1.0
-    return distance_penalty + line_penalty + angle_penalty + proj_penalty
+
+    geometry_score = (
+        distance_penalty + line_penalty + angle_penalty + proj_penalty
+    )
+    return (alignment_penalty, geometry_score)
 
 
 def deduplicate_bcps(
@@ -724,7 +823,8 @@ def deduplicate_bcps(
     Globally deduplicate BCP candidates by position.
 
     For each cluster of CPs within position_tol_bohr, keep the one
-    with the smallest geometry score (best pair assignment).
+    with the best pair assignment.  Alignment with the positive
+    Hessian eigenvector dominates; the geometry score breaks ties.
 
     Returns a list of unique BCPs.
     """
@@ -795,6 +895,7 @@ def find_bcps_parallel(
     min_bcp_angle: float = 140.0,
     projection_margin: float = 0.20,
     max_line_fraction: float = 0.35,
+    min_alignment: Optional[float] = 0.8,
     max_step_angstrom: float = 0.75,
     dedup_tol_angstrom: float = 0.03,
 ) -> List[Dict]:
@@ -803,6 +904,13 @@ def find_bcps_parallel(
 
     Parameters are expressed in chemically intuitive units where
     possible; internally all geometry is converted to Bohr.
+
+    ``min_alignment`` is the minimum absolute cosine between the A-B
+    direction and the eigenvector of the single positive Hessian
+    eigenvalue (``[0, 1]``; higher means more collinear).  It acts as a
+    hard filter on pair assignment.  Lower it (for example to 0.6-0.7)
+    if real BCPs are lost to spline noise; set it to ``None`` to disable
+    the filter.
     """
     pairs = generate_candidate_pairs(atoms, bcp_search_radius)
     if not pairs:
@@ -817,6 +925,7 @@ def find_bcps_parallel(
         "min_bcp_angle": min_bcp_angle,
         "projection_margin": projection_margin,
         "max_line_fraction": max_line_fraction,
+        "min_alignment": min_alignment,
         "max_step_bohr": max_step_angstrom * ANGSTROM_TO_BOHR,
     }
 

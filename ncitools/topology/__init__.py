@@ -43,7 +43,9 @@ from .topology import (
     find_nci,
     generate_candidate_pairs,
     newton_stationary_point,
+    pair_alignment_cosine,
     pair_geometry,
+    positive_hessian_eigenvector,
     valid_bcp_pair_geometry,
 )
 
@@ -79,7 +81,9 @@ __all__ = [
     "find_nci",
     "generate_candidate_pairs",
     "newton_stationary_point",
+    "pair_alignment_cosine",
     "pair_geometry",
+    "positive_hessian_eigenvector",
     "valid_bcp_pair_geometry",
     # --- Detectors ---
     "find_nci_with_aromatic",
