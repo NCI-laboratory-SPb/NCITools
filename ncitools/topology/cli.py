@@ -104,13 +104,15 @@ def _print_summary(G: nx.Graph) -> None:
 @click.option("--projection-margin", default=0.20, show_default=True, type=float)
 @click.option("--max-line-fraction", default=0.35, show_default=True, type=float)
 @click.option(
+    "--min-alignment", default=0.8, show_default=True,
+    type=click.FloatRange(0.0, 1.0),
+    help="Minimum |cos| between the A–B direction and the positive "
+         "Hessian eigenvector. Use 0 to disable the hard filter.",
+)
+@click.option(
     "--rho-covalent-threshold", default=0.089,
     show_default=True, type=float,
     help="ρ threshold for covalent-like BCPs (a.u.).",
-)
-@click.option(
-    "--covalent-scale", default=1.25, show_default=True, type=float,
-    help="Scale factor applied to covalent radii when screening bonds.",
 )
 @click.option(
     "--require-negative-laplacian", is_flag=True, default=False,
@@ -118,7 +120,8 @@ def _print_summary(G: nx.Graph) -> None:
 )
 @click.option(
     "--tolerance", default=0.2, show_default=True, type=float,
-    help="Extra slack (Å) for geometry-based covalent bond detection.",
+    help="Extra slack (Å) for covalent bond detection and "
+         "covalent-like BCP screening.",
 )
 @click.option(
     "--skip", multiple=True, type=click.Choice(_INTERACTION_TYPES),
@@ -136,8 +139,8 @@ def topology(
     min_bcp_angle,
     projection_margin,
     max_line_fraction,
+    min_alignment,
     rho_covalent_threshold,
-    covalent_scale,
     require_negative_laplacian,
     tolerance,
     skip,
@@ -180,13 +183,14 @@ def topology(
         min_bcp_angle=min_bcp_angle,
         projection_margin=projection_margin,
         max_line_fraction=max_line_fraction,
+        min_alignment=min_alignment,
     )
     click.echo(f"Unique (3,-1) BCPs found: {len(bcps)}")
 
     bcps_nci, bcps_covalent = find_nci(
         bcps, cube.atoms,
         rho_threshold=rho_covalent_threshold,
-        covalent_scale=covalent_scale,
+        tolerance=tolerance,
         require_negative_laplacian=require_negative_laplacian,
         filter_artifacts=True,
     )

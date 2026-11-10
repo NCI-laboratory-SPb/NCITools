@@ -38,8 +38,9 @@ def bond_cutoff_angstrom(
     """
     Maximum distance used for a geometry-based covalent assignment.
 
-    The value is deliberately somewhat generous because the purpose
-    is screening, not rigorous bond-order determination.
+    ``bias`` is an additive tolerance in Angstrom.  The value is
+    deliberately somewhat generous because the purpose is screening,
+    not rigorous bond-order determination.
     """
     return bias + covalent_radius(symbol1) + covalent_radius(symbol2)
 
@@ -975,7 +976,7 @@ def classify_covalent_like(
     bcp: Dict,
     atoms: List[Tuple[int, np.ndarray]],
     rho_threshold: float = 0.089,
-    covalent_scale: float = 1.25,
+    tolerance: float = 0.2,
     require_negative_laplacian: bool = False,
 ) -> bool:
     """
@@ -989,8 +990,9 @@ def classify_covalent_like(
 
     AND
 
-        atom distance <=
-        covalent_scale * (r_cov(A) + r_cov(B))
+        atom distance <= r_cov(A) + r_cov(B) + tolerance
+
+    ``tolerance`` is an additive slack in Angstrom.
 
     Optionally the Laplacian can also be required to be negative.
 
@@ -1001,7 +1003,7 @@ def classify_covalent_like(
     symbol_i = get_symbol(atoms[i][0])
     symbol_j = get_symbol(atoms[j][0])
     distance_angstrom = bcp["pair_distance"] * BOHR_TO_ANGSTROM
-    cutoff = bond_cutoff_angstrom(symbol_i, symbol_j, scale=covalent_scale)
+    cutoff = bond_cutoff_angstrom(symbol_i, symbol_j, bias=tolerance)
 
     if bcp["rho"] < rho_threshold:
         return False
@@ -1037,12 +1039,15 @@ def find_nci(
     bcps: List[Dict],
     atoms: List[Tuple[int, np.ndarray]],
     rho_threshold: float = 0.089,
-    covalent_scale: float = 1.25,
+    tolerance: float = 0.2,
     require_negative_laplacian: bool = False,
     filter_artifacts: bool = True,
 ) -> Tuple[List[Dict], List[Dict]]:
     """
     Split BCPs into likely covalent and NCI sets.
+
+    ``tolerance`` is the additive slack (Angstrom) used by
+    :func:`classify_covalent_like` on top of the covalent radii sum.
 
     NCI set is additionally filtered to remove artefacts
     (negative Laplacian, excessive rho).
@@ -1053,7 +1058,7 @@ def find_nci(
         if classify_covalent_like(
             bcp, atoms,
             rho_threshold=rho_threshold,
-            covalent_scale=covalent_scale,
+            tolerance=tolerance,
             require_negative_laplacian=require_negative_laplacian,
         ):
             bcps_covalent.append(bcp)

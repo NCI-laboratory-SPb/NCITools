@@ -7,9 +7,13 @@ no CUBE file or density grid is required.
 import numpy as np
 import pytest
 
+from ncitools.constants import ANGSTROM_TO_BOHR
 from ncitools.topology.topology import (
     _compute_bcp_score,
+    bond_cutoff_angstrom,
+    classify_covalent_like,
     deduplicate_bcps,
+    find_nci,
     newton_stationary_point,
     pair_alignment_cosine,
     pair_geometry,
@@ -190,6 +194,76 @@ def test_deduplicate_keeps_distinct_positions():
     result = deduplicate_bcps([first, second], position_tol_bohr=0.05)
 
     assert len(result) == 2
+
+
+# --------------------------------------------------------------------------- #
+#  Covalent-like BCP screening
+# --------------------------------------------------------------------------- #
+
+def test_bond_cutoff_is_additive_tolerance():
+    # R_C = 0.75 A in the current RADII table.
+    assert bond_cutoff_angstrom("C", "C") == pytest.approx(1.70)
+    assert bond_cutoff_angstrom("C", "C", bias=0.5) == pytest.approx(2.00)
+
+
+def _covalent_bcp(distance_angstrom, rho=0.1, laplacian=0.0):
+    return {
+        "atom1": 0,
+        "atom2": 1,
+        "pair_distance": distance_angstrom * ANGSTROM_TO_BOHR,
+        "rho": rho,
+        "laplacian": laplacian,
+    }
+
+
+def _carbon_pair():
+    return [
+        (6, np.zeros(3)),
+        (6, np.array([0.0, 0.0, 1.7 * ANGSTROM_TO_BOHR])),
+    ]
+
+
+def test_classify_covalent_like_uses_additive_tolerance():
+    atoms = _carbon_pair()
+
+    # Default tolerance 0.2 A -> cutoff C-C 1.70 A.
+    assert classify_covalent_like(_covalent_bcp(1.69), atoms)
+    assert not classify_covalent_like(_covalent_bcp(1.71), atoms)
+    # A larger tolerance widens the window.
+    assert classify_covalent_like(_covalent_bcp(1.80), atoms, tolerance=0.4)
+
+
+def test_classify_covalent_like_keeps_other_gates():
+    atoms = _carbon_pair()
+
+    assert not classify_covalent_like(_covalent_bcp(1.50, rho=0.05), atoms)
+    assert not classify_covalent_like(
+        _covalent_bcp(1.50, laplacian=1.0),
+        atoms,
+        require_negative_laplacian=True,
+    )
+    assert classify_covalent_like(
+        _covalent_bcp(1.50, laplacian=-1.0),
+        atoms,
+        require_negative_laplacian=True,
+    )
+
+
+def test_find_nci_splits_with_tolerance():
+    atoms = _carbon_pair()
+    covalent = _covalent_bcp(1.50, laplacian=1.0)
+    nci = {
+        "atom1": 0,
+        "atom2": 1,
+        "pair_distance": 3.0 * ANGSTROM_TO_BOHR,
+        "rho": 0.01,
+        "laplacian": 0.05,
+    }
+
+    bcps_nci, bcps_covalent = find_nci([covalent, nci], atoms)
+
+    assert bcps_covalent == [covalent]
+    assert bcps_nci == [nci]
 
 
 # --------------------------------------------------------------------------- #
