@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ncitools"
-version = "0.1.0"
+version = "0.2.0"
 description = "NCITools — geometry-based detection of non-covalent interactions"
 readme = "README.md"
 authors = [
