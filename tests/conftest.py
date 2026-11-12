@@ -33,6 +33,39 @@ def water_dimer():
         ],
     )
 
+@pytest.fixture
+def water_dimer_with_2_HB():
+    """Two water molecules with 2 HBs, were each oxygen is a donor and an acceptor"""
+    return Atoms(
+        symbols=["O", "O", "H", "H", "H", "H"],
+        positions=[
+            [0.037,   0.151,  0.000],
+            [1.997,   1.641, -0.007],
+            [0.989,   0.030,  0.000],
+            [-0.319, -0.740,  0.000],
+            [2.357,   2.531, -0.010],
+            [1.045,   1.768, -0.009],
+        ],
+    )
+
+
+@pytest.fixture
+def clashing_h2_dimer():
+    """
+    Two H2 molecules are arranged in a T-shaped cross,
+    so that their covalent bonds are located close to each other in space.
+    """
+    return Atoms(
+        symbols=["H", "H", "H", "H"],
+        positions=[
+            [0.656733351, -0.126828931, -0.047129656],
+            [0.656733351, -0.126828931, -0.787129656],
+            [0.200335296, -0.878810120, -0.432442438],
+            [-0.139700504,-1.534960323, -0.470423561],
+        ],
+    )
+
+
 
 @pytest.fixture
 def aromatic_dimer():
