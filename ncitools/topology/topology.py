@@ -598,8 +598,24 @@ def valid_bcp_pair_geometry(
 # ----------------------------------------------------------------------------
 
 def make_midpoint_seed(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Return the midpoint of the segment AB as the only starting point."""
+    """Return the midpoint of the segment AB as the primary starting point."""
     return 0.5 * (np.asarray(a) + np.asarray(b))
+
+
+def make_seed_points(a: np.ndarray, b: np.ndarray) -> List[np.ndarray]:
+    """
+    Starting points along A-B, midpoint first.
+
+    ``0.5`` is the chemically natural seed for a bond path.  ``0.75`` and
+    ``0.25`` are fallbacks for pairs whose midpoint lies inside a
+    neighbouring covalent bond or on a nearly flat ridge, where the
+    Newton search can stall before reaching the BCP (for example a
+    hydrogen bond O-H...A when the pair is H...A).
+    """
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    ab = b - a
+    return [a + fraction * ab for fraction in (0.5, 0.75, 0.25)]
 
 
 # ----------------------------------------------------------------------------
@@ -713,8 +729,9 @@ def _search_pair_worker(args: Tuple[int, int, np.ndarray, np.ndarray, Dict]) -> 
     """
     Worker function.
 
-    Performs exactly one Newton search starting from the midpoint.
-    Returns a single candidate if a valid (3,-1) CP is found.
+    Tries the midpoint seed first; if it does not yield a valid (3,-1)
+    CP, retries from off-centre seeds along A-B.  Returns at most one
+    candidate per atom pair.
     """
     atom1_idx, atom2_idx, atom1_position, atom2_position, settings = args
     interp = _WORKER_INTERP
@@ -723,58 +740,59 @@ def _search_pair_worker(args: Tuple[int, int, np.ndarray, np.ndarray, Dict]) -> 
 
     a = np.asarray(atom1_position, dtype=float)
     b = np.asarray(atom2_position, dtype=float)
-    seed = make_midpoint_seed(a, b)
 
-    result = newton_stationary_point(
-        interp, seed,
-        grad_tol=settings["grad_tol"],
-        max_iter=settings["max_iter"],
-        damping=True,
-        max_step_bohr=settings["max_step_bohr"],
-    )
-    if result is None:
-        return []
+    for seed in make_seed_points(a, b):
+        result = newton_stationary_point(
+            interp, seed,
+            grad_tol=settings["grad_tol"],
+            max_iter=settings["max_iter"],
+            damping=True,
+            max_step_bohr=settings["max_step_bohr"],
+        )
+        if result is None:
+            continue
 
-    eigs = result["eigenvalues"]
-    rank, signature, cp_type = classify_hessian(eigs, eig_tol=settings["eig_tol"])
-    if cp_type != "(3,-1)":
-        return []
+        eigs = result["eigenvalues"]
+        rank, signature, cp_type = classify_hessian(eigs, eig_tol=settings["eig_tol"])
+        if cp_type != "(3,-1)":
+            continue
 
-    # The eigenvector of the single positive eigenvalue points along
-    # the bond path and should be collinear with A-B.
-    eigenvectors = result.get("eigenvectors")
-    eigenvector = eigenvectors[:, 2].copy() if eigenvectors is not None else None
+        # The eigenvector of the single positive eigenvalue points along
+        # the bond path and should be collinear with A-B.
+        eigenvectors = result.get("eigenvectors")
+        eigenvector = eigenvectors[:, 2].copy() if eigenvectors is not None else None
 
-    geometry = pair_geometry(result["position"], a, b, eigenvector=eigenvector)
-    if not valid_bcp_pair_geometry(
-        geometry,
-        min_angle=settings["min_bcp_angle"],
-        projection_margin=settings["projection_margin"],
-        max_line_fraction=settings["max_line_fraction"],
-        min_alignment=settings.get("min_alignment"),
-    ):
-        return []
+        geometry = pair_geometry(result["position"], a, b, eigenvector=eigenvector)
+        if not valid_bcp_pair_geometry(
+            geometry,
+            min_angle=settings["min_bcp_angle"],
+            projection_margin=settings["projection_margin"],
+            max_line_fraction=settings["max_line_fraction"],
+            min_alignment=settings.get("min_alignment"),
+        ):
+            continue
 
-    alignment = geometry["alignment"]
+        alignment = geometry["alignment"]
 
-    candidate = {
-        "position": result["position"].copy(),
-        "rho": float(result["rho"]),
-        "grad_norm": float(result["grad_norm"]),
-        "eigenvalues": eigs.copy(),
-        "laplacian": float(np.sum(eigs)),
-        "ellipticity": (float(eigs[0] / eigs[1] - 1.0) if abs(eigs[1]) > settings["eig_tol"] else 0.0),
-        "atom1": int(atom1_idx),
-        "atom2": int(atom2_idx),
-        "pair_distance": float(geometry["atom_distance"]),
-        "pair_angle": float(geometry["angle"]),
-        "line_distance": float(geometry["line_distance"]),
-        "projection_fraction": float(geometry["projection_fraction"]),
-        "distance_a": float(geometry["distance_a"]),
-        "distance_b": float(geometry["distance_b"]),
-        "alignment": (None if alignment is None else float(alignment)),
-    }
-    return [candidate]
+        return [{
+            "position": result["position"].copy(),
+            "rho": float(result["rho"]),
+            "grad_norm": float(result["grad_norm"]),
+            "eigenvalues": eigs.copy(),
+            "laplacian": float(np.sum(eigs)),
+            "ellipticity": (float(eigs[0] / eigs[1] - 1.0) if abs(eigs[1]) > settings["eig_tol"] else 0.0),
+            "atom1": int(atom1_idx),
+            "atom2": int(atom2_idx),
+            "pair_distance": float(geometry["atom_distance"]),
+            "pair_angle": float(geometry["angle"]),
+            "line_distance": float(geometry["line_distance"]),
+            "projection_fraction": float(geometry["projection_fraction"]),
+            "distance_a": float(geometry["distance_a"]),
+            "distance_b": float(geometry["distance_b"]),
+            "alignment": (None if alignment is None else float(alignment)),
+        }]
+
+    return []
 
 
 # ----------------------------------------------------------------------------
