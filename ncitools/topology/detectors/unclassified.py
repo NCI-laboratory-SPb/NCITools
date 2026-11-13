@@ -53,7 +53,7 @@ def find_unclassified_interactions(
         if _edge_has_type(
             G, i, j,
             {"HB", "XB", "ChB", "PnB", "stacking", "T-stacking",
-             "H-pi", "n-pi", "carbonyl"},
+             "H-pi", "n-pi", "carbonyl", "dihydrogen"},
         ):
             continue
 

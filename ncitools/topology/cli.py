@@ -25,6 +25,7 @@ from ncitools.topology import (
     find_nci_with_aromatic,
     find_sigma_hole_interactions,
     find_carbonyl_interactions,
+    find_dihydrogen_interactions,
     find_unclassified_interactions,
     prepare_graph_for_nci,
     output as topology_output,
@@ -34,7 +35,7 @@ from ncitools.topology import (
 _INTERACTION_TYPES = [
     "HB", "XB", "ChB", "PnB",
     "stacking", "H-pi", "n-pi",
-    "carbonyl", "unclassified",
+    "carbonyl", "dihydrogen", "unclassified",
 ]
 
 
@@ -235,6 +236,9 @@ def topology(
 
     if "carbonyl" not in skipped:
         G = find_carbonyl_interactions(bcps_nci, G, cube.atoms)
+
+    if "dihydrogen" not in skipped:
+        G = find_dihydrogen_interactions(bcps_nci, G, cube.atoms)
 
     if "unclassified" not in skipped:
         G = find_unclassified_interactions(bcps_nci, G, cube.atoms)

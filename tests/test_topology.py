@@ -4,16 +4,24 @@ These are unit tests on synthetic Hessians and geometry dictionaries;
 no CUBE file or density grid is required.
 """
 
+import networkx as nx
 import numpy as np
 import pytest
 
-from ncitools.constants import ANGSTROM_TO_BOHR
+from ncitools.constants import ANGSTROM_TO_BOHR, BOHR_TO_ANGSTROM
+from ncitools.topology.detectors.dihydrogen import (
+    find_dihydrogen_interactions,
+)
+from ncitools.topology.detectors.unclassified import (
+    find_unclassified_interactions,
+)
 from ncitools.topology.topology import (
     _compute_bcp_score,
     bond_cutoff_angstrom,
     classify_covalent_like,
     deduplicate_bcps,
     find_nci,
+    make_seed_points,
     newton_stationary_point,
     pair_alignment_cosine,
     pair_geometry,
@@ -348,3 +356,214 @@ def test_worker_enforces_alignment_filter(monkeypatch):
         settings,
     ))
     assert perpendicular == []
+
+
+def test_seed_points_start_at_midpoint_then_fall_back():
+    a = np.array([0.0, 0.0, 0.0])
+    b = np.array([0.0, 0.0, 4.0])
+
+    seeds = make_seed_points(a, b)
+
+    assert [float(seed[2]) for seed in seeds] == pytest.approx([2.0, 3.0, 1.0])
+
+
+def test_worker_falls_back_when_midpoint_search_fails(monkeypatch):
+    import ncitools.topology.topology as topology_module
+
+    monkeypatch.setattr(topology_module, "_WORKER_INTERP", _QuadraticDensity())
+
+    real_newton = topology_module.newton_stationary_point
+    seeds = []
+
+    def flaky_newton(interp, r0, **kwargs):
+        seeds.append(np.asarray(r0, dtype=float).copy())
+        if len(seeds) == 1:
+            return None
+        return real_newton(interp, r0, **kwargs)
+
+    monkeypatch.setattr(topology_module, "newton_stationary_point", flaky_newton)
+
+    settings = {
+        "grad_tol": 1.0e-6,
+        "max_iter": 60,
+        "eig_tol": 1.0e-8,
+        "min_bcp_angle": 140.0,
+        "projection_margin": 0.20,
+        "max_line_fraction": 0.35,
+        "min_alignment": 0.9,
+        "max_step_bohr": 1.5,
+    }
+
+    result = topology_module._search_pair_worker((
+        0, 1,
+        np.array([0.0, 0.0, -1.0]),
+        np.array([0.0, 0.0, 1.0]),
+        settings,
+    ))
+
+    # The midpoint was tried first, then the 0.75 seed succeeded.
+    assert len(seeds) == 2
+    assert seeds[1][2] == pytest.approx(0.5)
+    assert len(result) == 1
+    assert result[0]["alignment"] == pytest.approx(1.0)
+
+
+def test_worker_returns_empty_when_all_seeds_fail(monkeypatch):
+    import ncitools.topology.topology as topology_module
+
+    monkeypatch.setattr(topology_module, "_WORKER_INTERP", _QuadraticDensity())
+    monkeypatch.setattr(
+        topology_module, "newton_stationary_point", lambda *args, **kwargs: None
+    )
+
+    settings = {
+        "grad_tol": 1.0e-6,
+        "max_iter": 60,
+        "eig_tol": 1.0e-8,
+        "min_bcp_angle": 140.0,
+        "projection_margin": 0.20,
+        "max_line_fraction": 0.35,
+        "min_alignment": 0.9,
+        "max_step_bohr": 1.5,
+    }
+
+    result = topology_module._search_pair_worker((
+        0, 1,
+        np.array([0.0, 0.0, -1.0]),
+        np.array([0.0, 0.0, 1.0]),
+        settings,
+    ))
+
+    assert result == []
+
+
+# --------------------------------------------------------------------------- #
+#  Dihydrogen detector
+# --------------------------------------------------------------------------- #
+
+def _covalent_graph(atoms, bonds):
+    G = nx.Graph()
+    for idx, (atomic_number, _) in enumerate(atoms):
+        G.add_node(idx, element=int(atomic_number), node_type="atom")
+    for a, b in bonds:
+        G.add_edge(a, b, bond_type="covalent")
+    return G
+
+
+def _angstrom_atoms(specs):
+    return [
+        (z, np.asarray(pos, dtype=float) * ANGSTROM_TO_BOHR)
+        for z, pos in specs
+    ]
+
+
+def _hh_bcp(i, j, position_angstrom, rho=0.008):
+    return {
+        "atom1": i,
+        "atom2": j,
+        "position": np.asarray(position_angstrom, dtype=float) * ANGSTROM_TO_BOHR,
+        "rho": rho,
+        "laplacian": 0.0327,
+        "ellipticity": 0.74,
+        "eigenvalues": np.array([-0.0100, -0.0049, 0.0476]),
+        "grad_norm": 1.0e-7,
+    }
+
+
+def _two_methyls(hh_distance=2.2):
+    """H1 and H3 belong to different carbons; the H···H gap is adjustable."""
+    atoms = _angstrom_atoms([
+        (6, (0.0, 0.0, -1.09)),
+        (1, (0.0, 0.0, 0.0)),
+        (6, (0.0, 0.0, hh_distance + 1.09)),
+        (1, (0.0, 0.0, hh_distance)),
+    ])
+    G = _covalent_graph(atoms, [(0, 1), (2, 3)])
+    bcp = _hh_bcp(1, 3, (0.0, 0.0, hh_distance / 2.0))
+    return atoms, G, bcp
+
+
+def test_dihydrogen_detects_h_h_contact():
+    atoms, G, bcp = _two_methyls(2.2)
+
+    G = find_dihydrogen_interactions([bcp], G, atoms)
+
+    assert G.has_edge(1, 3)
+    edge = G.edges[1, 3]
+    assert edge["bond_type"] == "dihydrogen"
+    assert edge["distance"] == pytest.approx(2.2)
+    assert (edge["donor1_num"], edge["donor2_num"]) == (0, 2)
+    assert edge["donor1_symbol"] == "C"
+    assert edge["donor2_symbol"] == "C"
+    assert edge["rho"] == pytest.approx(0.008)
+
+
+def test_dihydrogen_ignores_long_h_h_contact():
+    atoms, G, bcp = _two_methyls(2.6)
+
+    G = find_dihydrogen_interactions([bcp], G, atoms)
+
+    assert not G.has_edge(1, 3)
+
+
+def test_dihydrogen_ignores_geminal_hydrogens():
+    atoms = _angstrom_atoms([
+        (6, (0.0, 0.0, 0.0)),
+        (1, (0.89, 0.0, -0.63)),
+        (1, (-0.89, 0.0, -0.63)),
+    ])
+    G = _covalent_graph(atoms, [(0, 1), (0, 2)])
+    bcp = _hh_bcp(1, 2, (0.0, 0.0, -0.63))
+
+    assert not find_dihydrogen_interactions([bcp], G.copy(), atoms).has_edge(1, 2)
+
+    relaxed = find_dihydrogen_interactions(
+        [bcp], G.copy(), atoms, exclude_geminal=False
+    )
+    assert relaxed.edges[1, 2]["bond_type"] == "dihydrogen"
+
+
+def test_dihydrogen_ignores_non_hydrogen_pairs():
+    atoms = _angstrom_atoms([(8, (0.0, 0.0, 0.0)), (8, (0.0, 0.0, 2.6))])
+    G = _covalent_graph(atoms, [])
+    bcp = _hh_bcp(0, 1, (0.0, 0.0, 1.3))
+
+    G = find_dihydrogen_interactions([bcp], G, atoms)
+
+    assert G.number_of_edges() == 0
+
+
+def test_dihydrogen_leaves_already_classified_bcps_alone():
+    atoms, G, bcp = _two_methyls(2.2)
+    G.add_edge(1, 3, bond_type="HB", position=np.asarray(bcp["position"]))
+
+    G = find_dihydrogen_interactions([bcp], G, atoms)
+
+    assert G.edges[1, 3]["bond_type"] == "HB"
+
+
+def test_dihydrogen_prevents_unclassified_fallback():
+    atoms, G, bcp = _two_methyls(2.2)
+
+    G = find_dihydrogen_interactions([bcp], G, atoms)
+    G = find_unclassified_interactions([bcp], G, atoms)
+
+    assert G.edges[1, 3]["bond_type"] == "dihydrogen"
+    assert all(
+        data.get("bond_type") != "unclassified"
+        for _, _, data in G.edges(data=True)
+    )
+
+
+def test_output_renders_dihydrogen_section(tmp_path):
+    from ncitools.topology.output import output
+
+    atoms, G, bcp = _two_methyls(2.2)
+    G = find_dihydrogen_interactions([bcp], G, atoms)
+
+    report = output(G, filename=str(tmp_path / "dih"))
+
+    text = open(report, encoding="utf-8").read()
+    assert "DIHYDROGEN CONTACTS" in text
+    assert "C-H···H-C" in text
+    assert "2.2" in text

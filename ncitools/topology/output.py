@@ -156,6 +156,25 @@ def output(
             ],
         },
         {
+            "key": "dihydrogen",
+            "title": "DIHYDROGEN CONTACTS (H···H)",
+            "header": [
+                "№", "Type", "H 1", "H 2", "D 1", "D 2", "H···H (Å)",
+                "ρ", "∇²ρ", "ε",
+            ],
+            "row_func": lambda d, i: [
+                i + 1,
+                f"{d.get('donor1_symbol') or '—'}-H···H-"
+                f"{d.get('donor2_symbol') or '—'}",
+                atom_number(d, "h1_num"),
+                atom_number(d, "h2_num"),
+                atom_number(d, "donor1_num"),
+                atom_number(d, "donor2_num"),
+                fmt_distance(d, "distance"),
+                fmt_rho(d), fmt_laplacian(d), fmt_ellipticity(d),
+            ],
+        },
+        {
             "key": "unclassified",
             "title": "UNCLASSIFIED NON-COVALENT CONTACTS",
             "header": [
