@@ -11,6 +11,7 @@ code can import everything from a single place::
         find_nci_with_aromatic,
         find_sigma_hole_interactions,
         find_carbonyl_interactions,
+        find_metallophilic_interactions,
         find_dihydrogen_interactions,
         find_unclassified_interactions,
         prepare_graph_for_nci,
@@ -56,6 +57,7 @@ from .topology import (
 from .detectors.aromatic import find_nci_with_aromatic
 from .detectors.sigma_hole import find_sigma_hole_interactions
 from .detectors.carbonyl import find_carbonyl_interactions
+from .detectors.metallophilic import find_metallophilic_interactions
 from .detectors.dihydrogen import find_dihydrogen_interactions
 from .detectors.unclassified import find_unclassified_interactions
 
@@ -91,6 +93,7 @@ __all__ = [
     "find_nci_with_aromatic",
     "find_sigma_hole_interactions",
     "find_carbonyl_interactions",
+    "find_metallophilic_interactions",
     "find_dihydrogen_interactions",
     "find_unclassified_interactions",
     "prepare_graph_for_nci",

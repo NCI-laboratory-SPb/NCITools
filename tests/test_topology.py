@@ -8,9 +8,21 @@ import networkx as nx
 import numpy as np
 import pytest
 
-from ncitools.constants import ANGSTROM_TO_BOHR, BOHR_TO_ANGSTROM
+from ncitools.constants import ANGSTROM_TO_BOHR, BOHR_TO_ANGSTROM, BONDI
 from ncitools.topology.detectors.dihydrogen import (
     find_dihydrogen_interactions,
+)
+from ncitools.topology.detectors.metallophilic import (
+    find_metallophilic_interactions,
+)
+from ncitools.topology.detectors.sigma_hole import (
+    find_sigma_hole_interactions,
+)
+from ncitools.topology.detectors.aromatic import (
+    find_nci_with_aromatic,
+)
+from ncitools.topology.detectors.carbonyl import (
+    find_carbonyl_interactions,
 )
 from ncitools.topology.detectors.unclassified import (
     find_unclassified_interactions,
@@ -447,7 +459,19 @@ def _covalent_graph(atoms, bonds):
         G.add_node(idx, element=int(atomic_number), node_type="atom")
     for a, b in bonds:
         G.add_edge(a, b, bond_type="covalent")
+    _assign_num_neighbours(G)
     return G
+
+
+def _assign_num_neighbours(G):
+    """Mirror geometry.graph_builder: count covalent+coordination partners."""
+    for idx in G.nodes:
+        if not isinstance(idx, int):
+            continue
+        G.nodes[idx]["num_neighbours"] = sum(
+            1 for n in G.adj[idx]
+            if G.edges[idx, n].get("bond_type") in ("covalent", "coordination")
+        )
 
 
 def _angstrom_atoms(specs):
@@ -498,12 +522,26 @@ def test_dihydrogen_detects_h_h_contact():
     assert edge["rho"] == pytest.approx(0.008)
 
 
-def test_dihydrogen_ignores_long_h_h_contact():
+def test_dihydrogen_keeps_weak_long_h_h_contact():
+    # The BCP is the only requirement: weak contacts beyond the vdW sum
+    # are reported with a low confidence score instead of being dropped.
     atoms, G, bcp = _two_methyls(2.6)
 
     G = find_dihydrogen_interactions([bcp], G, atoms)
 
-    assert not G.has_edge(1, 3)
+    assert G.has_edge(1, 3)
+    edge = G.edges[1, 3]
+    assert edge["bond_type"] == "dihydrogen"
+    assert edge["distance"] == pytest.approx(2.6)
+    assert edge["confidence_score"] < 0.8
+
+
+def test_dihydrogen_requires_a_bcp():
+    atoms, G, _ = _two_methyls(2.2)
+
+    G = find_dihydrogen_interactions([], G, atoms)
+
+    assert G.number_of_edges() == 2  # only the two C-H bonds
 
 
 def test_dihydrogen_ignores_geminal_hydrogens():
@@ -555,6 +593,333 @@ def test_dihydrogen_prevents_unclassified_fallback():
     )
 
 
+# --------------------------------------------------------------------------- #
+#  Confidence score / new families
+# --------------------------------------------------------------------------- #
+
+def _bcp_dict(atom1, atom2, position_angstrom, rho=0.01, laplacian=0.02):
+    return {
+        "atom1": atom1,
+        "atom2": atom2,
+        "position": np.asarray(position_angstrom, dtype=float) * ANGSTROM_TO_BOHR,
+        "rho": rho,
+        "laplacian": laplacian,
+        "ellipticity": 0.1,
+        "eigenvalues": np.array([-0.01, -0.005, 0.02]),
+        "grad_norm": 1.0e-7,
+    }
+
+
+def _aromatic_system(extra_specs, ring_radius=1.39):
+    """Benzene ring in the xy plane plus extra atoms at indices >= 6."""
+    ring_positions = [
+        (
+            ring_radius * np.cos(2.0 * np.pi * k / 6.0),
+            ring_radius * np.sin(2.0 * np.pi * k / 6.0),
+            0.0,
+        )
+        for k in range(6)
+    ]
+    atoms = _angstrom_atoms(
+        [(6, position) for position in ring_positions] + list(extra_specs)
+    )
+
+    G = nx.Graph()
+    for idx, (atomic_number, _) in enumerate(atoms):
+        G.add_node(idx, element=int(atomic_number), node_type="atom")
+    for k in range(6):
+        G.add_edge(k, (k + 1) % 6, bond_type="covalent")
+
+    G.add_node(
+        "ring_0",
+        node_type="aromatic_center",
+        aromatic=True,
+        cycle=tuple(range(6)),
+        position=np.zeros(3),
+        normal=np.array([0.0, 0.0, 1.0]),
+        radius=ring_radius * ANGSTROM_TO_BOHR,
+        size=6,
+    )
+    for k in range(6):
+        G.add_edge(k, "ring_0", bond_type="aromatic")
+
+    _assign_num_neighbours(G)
+    return atoms, G
+
+
+def _ase_atoms(atoms):
+    from ase import Atoms as AseAtoms
+
+    from ncitools.utils import get_symbol
+
+    return AseAtoms(
+        symbols=[get_symbol(atomic_number) for atomic_number, _ in atoms],
+        positions=[
+            np.asarray(position) * BOHR_TO_ANGSTROM for _, position in atoms
+        ],
+    )
+
+
+def _to_angstrom_graph(G):
+    """Copy a topology graph and convert aromatic metadata to Angstrom."""
+    H = G.copy()
+    for _, data in H.nodes(data=True):
+        if data.get("node_type") != "aromatic_center":
+            continue
+        if data.get("position") is not None:
+            data["position"] = (
+                np.asarray(data["position"]) * BOHR_TO_ANGSTROM
+            )
+        if data.get("radius") is not None:
+            data["radius"] = float(data["radius"]) * BOHR_TO_ANGSTROM
+    return H
+
+
+def _tetrel_system():
+    atoms = _angstrom_atoms([
+        (14, (0.0, 0.0, 0.0)),        # Si (electrophile)
+        (6, (-1.9, 0.0, 0.0)),        # D
+        (8, (2.2, 0.0, 0.0)),         # A
+        (1, (1.72, -0.831, 0.0)),     # Y on A
+    ])
+    G = _covalent_graph(atoms, [(0, 1), (2, 3)])
+    bcp = _bcp_dict(0, 2, (1.1, 0.0, 0.0))
+    return atoms, G, bcp
+
+
+def test_sigma_hole_detects_tetrel_bond():
+    atoms, G, bcp = _tetrel_system()
+
+    G = find_sigma_hole_interactions([bcp], G, atoms)
+
+    assert G.edges[0, 2]["bond_type"] == "TetB"
+    assert 0.0 < G.edges[0, 2]["confidence_score"] <= 1.0
+
+
+def test_sigma_hole_tetrel_confidence_matches_geometry():
+    from ncitools.geometry.detectors.sigma_hole import find_nci_bonds
+
+    atoms, G, bcp = _tetrel_system()
+    G_topo = find_sigma_hole_interactions([bcp], G.copy(), atoms)
+
+    G_geom = find_nci_bonds(
+        _ase_atoms(atoms), G.copy(), ["Si"], 150.0, "TetB",
+        radii=BONDI, confidence_threshold=0.0,
+    )
+
+    assert (
+        G_topo.edges[0, 2]["confidence_score"]
+        == pytest.approx(G_geom.edges[0, 2]["confidence_score"])
+    )
+    assert (
+        G_topo.edges[0, 2]["angle_xay"]
+        == pytest.approx(G_geom.edges[0, 2]["angle_xay"])
+    )
+
+
+def test_sigma_hole_skip_tetrel_family():
+    atoms, G, bcp = _tetrel_system()
+
+    G = find_sigma_hole_interactions(
+        [bcp], G, atoms, skipped=frozenset({"TetB"}),
+    )
+
+    assert not G.has_edge(0, 2)
+
+
+def _x_pi_system(angle=180.0):
+    theta = np.radians(180.0 - angle)
+    direction = np.array([np.sin(theta), 0.0, np.cos(theta)])
+    chlorine = np.array([0.0, 0.0, 3.0])
+    carbon = chlorine + 1.8 * direction
+
+    atoms, G = _aromatic_system([
+        (17, chlorine),
+        (6, carbon),
+    ])
+    G.add_edge(6, 7, bond_type="covalent")
+    _assign_num_neighbours(G)
+
+    bcp = _bcp_dict(6, 0, (0.695, 0.0, 1.5))
+    return atoms, G, bcp
+
+
+def test_x_pi_requires_sigma_hole_angle():
+    atoms, G, bcp = _x_pi_system(180.0)
+    G = find_nci_with_aromatic([bcp], G, atoms)
+
+    assert G.edges[6, "ring_0"]["bond_type"] == "X-pi"
+    assert G.edges[6, "ring_0"]["confidence_score"] > 0.8
+
+    atoms, G, bcp = _x_pi_system(120.0)
+    G = find_nci_with_aromatic([bcp], G, atoms)
+
+    assert not G.has_edge(6, "ring_0")
+
+
+def test_x_pi_confidence_matches_geometry():
+    from ncitools.geometry.detectors.aromatic import (
+        find_nci_with_aromatic as geometry_aromatic,
+    )
+
+    atoms, G, bcp = _x_pi_system(180.0)
+    G_topo = find_nci_with_aromatic([bcp], G.copy(), atoms)
+
+    G_geom = geometry_aromatic(
+        _ase_atoms(atoms), _to_angstrom_graph(G), confidence_threshold=0.0,
+    )
+
+    assert (
+        G_topo.edges[6, "ring_0"]["confidence_score"]
+        == pytest.approx(G_geom.edges[6, "ring_0"]["confidence_score"])
+    )
+
+
+def test_ion_pi_requires_a_bare_ion():
+    atoms, G = _aromatic_system([(11, (0.0, 0.0, 2.5))])
+    bcp = _bcp_dict(6, 0, (0.695, 0.0, 1.25))
+
+    G = find_nci_with_aromatic([bcp], G, atoms)
+
+    assert G.edges[6, "ring_0"]["bond_type"] == "ion-pi"
+    assert G.edges[6, "ring_0"]["angle_to_normal"] == pytest.approx(0.0)
+
+    # A metal with a covalent bond is not a bare ion.
+    atoms, G = _aromatic_system([
+        (11, (0.0, 0.0, 2.5)),
+        (6, (0.0, 0.0, 5.0)),
+    ])
+    G.add_edge(6, 7, bond_type="covalent")
+    _assign_num_neighbours(G)
+    bcp = _bcp_dict(6, 0, (0.695, 0.0, 1.25))
+
+    G = find_nci_with_aromatic([bcp], G, atoms)
+
+    assert not G.has_edge(6, "ring_0")
+
+
+def test_ion_pi_confidence_matches_geometry():
+    from ncitools.geometry.detectors.aromatic import (
+        find_nci_with_aromatic as geometry_aromatic,
+    )
+
+    atoms, G = _aromatic_system([(11, (0.0, 0.0, 2.5))])
+    bcp = _bcp_dict(6, 0, (0.695, 0.0, 1.25))
+    G_topo = find_nci_with_aromatic([bcp], G.copy(), atoms)
+
+    G_geom = geometry_aromatic(
+        _ase_atoms(atoms), _to_angstrom_graph(G), confidence_threshold=0.0,
+    )
+
+    assert (
+        G_topo.edges[6, "ring_0"]["confidence_score"]
+        == pytest.approx(G_geom.edges[6, "ring_0"]["confidence_score"])
+    )
+
+
+def test_n_pi_confidence_matches_geometry():
+    from ncitools.geometry.detectors.aromatic import (
+        find_nci_with_aromatic as geometry_aromatic,
+    )
+
+    atoms, G = _aromatic_system([
+        (7, (0.0, 0.0, 3.0)),    # lone-pair donor
+        (6, (0.0, 0.0, 4.4)),    # donor substituent
+    ])
+    G.add_edge(6, 7, bond_type="covalent")
+    _assign_num_neighbours(G)
+    bcp = _bcp_dict(6, 0, (0.695, 0.0, 1.5))
+
+    G_topo = find_nci_with_aromatic([bcp], G.copy(), atoms)
+    G_geom = geometry_aromatic(
+        _ase_atoms(atoms), _to_angstrom_graph(G), confidence_threshold=0.0,
+    )
+
+    assert G_topo.edges[6, "ring_0"]["bond_type"] == "n-pi"
+    assert (
+        G_topo.edges[6, "ring_0"]["confidence_score"]
+        == pytest.approx(G_geom.edges[6, "ring_0"]["confidence_score"])
+    )
+    # The donor→centroid vs donor→Y convention must match geometry.
+    assert (
+        G_topo.edges[6, "ring_0"]["angle"]
+        == pytest.approx(G_geom.edges[6, "ring_0"]["angle"])
+    )
+
+
+def test_hb_confidence_matches_geometry():
+    from ncitools.geometry.detectors.sigma_hole import find_nci_bonds
+
+    atoms = _angstrom_atoms([
+        (8, (0.0, 0.0, 0.0)),      # D
+        (1, (0.96, 0.0, 0.0)),     # H
+        (7, (2.8, 0.0, 0.0)),      # A
+        (6, (4.3, 0.0, 0.0)),      # Y on A
+    ])
+    G = _covalent_graph(atoms, [(0, 1), (2, 3)])
+    bcp = _bcp_dict(1, 2, (1.88, 0.0, 0.0))
+
+    G_topo = find_sigma_hole_interactions([bcp], G.copy(), atoms)
+    G_geom = find_nci_bonds(
+        _ase_atoms(atoms), G.copy(), ["H"], 110.0, "HB",
+        radii=BONDI, confidence_threshold=0.0,
+    )
+
+    assert G_topo.edges[1, 2]["bond_type"] == "HB"
+    assert (
+        G_topo.edges[1, 2]["confidence_score"]
+        == pytest.approx(G_geom.edges[1, 2]["confidence_score"])
+    )
+    assert (
+        G_topo.edges[1, 2]["angle_xay"]
+        == pytest.approx(G_geom.edges[1, 2]["angle_xay"])
+    )
+
+
+def _au_system(distance=3.5, bonded=False):
+    atoms = _angstrom_atoms([
+        (79, (0.0, 0.0, 0.0)),
+        (79, (0.0, 0.0, distance)),
+    ])
+    bonds = [(0, 1)] if bonded else []
+    G = _covalent_graph(atoms, bonds)
+    bcp = _bcp_dict(0, 1, (0.0, 0.0, distance / 2.0))
+    return atoms, G, bcp
+
+
+def test_metallophilic_requires_bcp_and_no_bond():
+    atoms, G, bcp = _au_system()
+    G = find_metallophilic_interactions([bcp], G, atoms)
+
+    assert G.edges[0, 1]["bond_type"] == "metallophilic"
+    assert G.edges[0, 1]["distance"] == pytest.approx(3.5)
+    assert 0.0 < G.edges[0, 1]["confidence_score"] <= 1.0
+
+    # No BCP -> no contact.
+    atoms, G, _ = _au_system()
+    assert not find_metallophilic_interactions([], G, atoms).has_edge(0, 1)
+
+    # Covalent bond -> not metallophilic.
+    atoms, G, bcp = _au_system(bonded=True)
+    G = find_metallophilic_interactions([bcp], G, atoms)
+    assert G.edges[0, 1]["bond_type"] == "covalent"
+
+
+def test_metallophilic_confidence_matches_geometry():
+    from ncitools.geometry.detectors.metallophilic import (
+        find_intermetalls_contact,
+    )
+
+    atoms, G, bcp = _au_system()
+    G_topo = find_metallophilic_interactions([bcp], G.copy(), atoms)
+    G_geom = find_intermetalls_contact(_ase_atoms(atoms), G.copy())
+
+    assert (
+        G_topo.edges[0, 1]["confidence_score"]
+        == pytest.approx(G_geom.edges[0, 1]["confidence_score"])
+    )
+
+
 def test_output_header_uses_input_file(tmp_path):
     from ncitools.topology.output import output
 
@@ -574,6 +939,64 @@ def test_output_header_uses_input_file(tmp_path):
     assert header[2] == f"Input file: {tmp_path / 'dih'}.cub"
 
 
+def _carbonyl_system():
+    """Donor O···C=O with a Bürgi–Dunitz angle of ~115 degrees."""
+    bd = np.radians(115.0)
+    donor = 2.30 * np.array([np.cos(bd), np.sin(bd), 0.0])
+    # R-O···C = 120 degrees.
+    to_carbon = -donor / np.linalg.norm(donor)
+    phi = np.arctan2(to_carbon[1], to_carbon[0]) + np.radians(120.0)
+    substituent = donor + 1.20 * np.array([np.cos(phi), np.sin(phi), 0.0])
+
+    atoms = _angstrom_atoms([
+        (6, (0.0, 0.0, 0.0)),        # carbonyl carbon
+        (8, (1.20, 0.0, 0.0)),       # carbonyl oxygen
+        (6, (0.0, 1.30, 0.0)),       # substituent
+        (6, (0.0, -1.30, 0.0)),      # substituent
+        (8, tuple(donor)),           # lone-pair donor
+        (7, tuple(substituent)),     # donor substituent
+    ])
+    G = _covalent_graph(atoms, [(0, 1), (0, 2), (0, 3), (4, 5)])
+    bcp = _bcp_dict(4, 0, tuple(donor / 2.0))
+    return atoms, G, bcp
+
+
+def test_carbonyl_detects_burgi_dunitz_contact():
+    atoms, G, bcp = _carbonyl_system()
+
+    G = find_carbonyl_interactions([bcp], G, atoms)
+
+    assert G.edges[4, 0]["bond_type"] == "carbonyl"
+    assert G.edges[4, 0]["distance"] == pytest.approx(2.30)
+    assert G.edges[4, 0]["burgi_dunitz_angle"] == pytest.approx(115.0)
+    assert 0.0 < G.edges[4, 0]["confidence_score"] <= 1.0
+
+
+def test_carbonyl_confidence_matches_geometry():
+    from ncitools.geometry.detectors.carbonyl import (
+        find_carbonyl_interactions as geometry_carbonyl,
+    )
+
+    atoms, G, bcp = _carbonyl_system()
+    G_topo = find_carbonyl_interactions([bcp], G.copy(), atoms)
+    G_geom = geometry_carbonyl(
+        _ase_atoms(atoms), G.copy(), confidence_threshold=0.0,
+    )
+
+    assert (
+        G_topo.edges[4, 0]["confidence_score"]
+        == pytest.approx(G_geom.edges[4, 0]["confidence_score"])
+    )
+    assert (
+        G_topo.edges[4, 0]["burgi_dunitz_angle"]
+        == pytest.approx(G_geom.edges[4, 0]["burgi_dunitz_angle"])
+    )
+    assert (
+        G_topo.edges[4, 0]["angle_rac"]
+        == pytest.approx(G_geom.edges[4, 0]["angle"])
+    )
+
+
 def test_output_renders_dihydrogen_section(tmp_path):
     from ncitools.topology.output import output
 
@@ -584,5 +1007,65 @@ def test_output_renders_dihydrogen_section(tmp_path):
 
     text = open(report, encoding="utf-8").read()
     assert "DIHYDROGEN CONTACTS" in text
+    assert "Confidence score" in text
     assert "C-H···H-C" in text
     assert "2.2" in text
+
+
+def test_output_renders_new_sections_with_confidence(tmp_path):
+    from ncitools.topology.output import output
+
+    atoms, G, bcp = _tetrel_system()
+    tetrel = find_sigma_hole_interactions([bcp], G, atoms)
+
+    atoms, G, bcp = _x_pi_system(180.0)
+    x_pi = find_nci_with_aromatic([bcp], G, atoms)
+
+    atoms, G = _aromatic_system([(11, (0.0, 0.0, 2.5))])
+    bcp = _bcp_dict(6, 0, (0.695, 0.0, 1.25))
+    ion_pi = find_nci_with_aromatic([bcp], G, atoms)
+
+    atoms, G, bcp = _au_system()
+    metallophilic = find_metallophilic_interactions([bcp], G, atoms)
+
+    cases = [
+        ("tetb", "TETREL BONDS", tetrel),
+        ("xpi", "R-X···π INTERACTIONS", x_pi),
+        ("ionpi", "ION···π INTERACTIONS", ion_pi),
+        ("met", "METALLOPHILIC INTERACTIONS", metallophilic),
+    ]
+
+    for name, title, graph in cases:
+        report = output(graph, filename=str(tmp_path / name))
+        text = open(report, encoding="utf-8").read()
+        assert title in text
+        assert "Confidence score" in text
+
+        confidence = next(
+            data["confidence_score"]
+            for _, _, data in graph.edges(data=True)
+            if "confidence_score" in data
+        )
+        expected = str(round(float(confidence), 2))
+        if expected.endswith(".0"):
+            expected = expected[:-2]
+        assert expected in text
+
+
+def test_output_unclassified_has_no_confidence_column(tmp_path):
+    from ncitools.topology.output import output
+
+    G = nx.Graph()
+    G.add_edge(
+        0, 1,
+        bond_type="unclassified",
+        atom1_num=0, atom2_num=1,
+        atom1_symbol="C", atom2_symbol="O",
+        distance=3.0, rho=0.004, laplacian=0.01, ellipticity=0.2,
+    )
+
+    report = output(G, filename=str(tmp_path / "unclassified"))
+
+    text = open(report, encoding="utf-8").read()
+    assert "UNCLASSIFIED NON-COVALENT CONTACTS" in text
+    assert "Confidence score" not in text

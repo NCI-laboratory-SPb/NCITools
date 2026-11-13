@@ -15,12 +15,25 @@ from ncitools.constants import ANGSTROM_TO_BOHR
 # Graph helpers
 # ---------------------------------------------------------------------------
 
-def _covalent_neighbors(G: nx.Graph, atom_idx: int) -> List[int]:
-    """Covalent neighbours of atom_idx."""
+def _covalent_neighbors(
+    G: nx.Graph,
+    atom_idx: int,
+    bond_types: Tuple[str, ...] = ("covalent", "coordination"),
+) -> List[int]:
+    """
+    Neighbours of ``atom_idx`` connected by one of ``bond_types``.
+
+    By default both covalent and coordination edges count, mirroring the
+    ``("covalent", "coordination")`` partner rule used throughout the
+    geometry detectors.  Pass ``bond_types=("covalent",)`` where the
+    geometry module restricts itself to covalent bonds (e.g. the parent of a
+    hydrogen in X–H···π).
+    """
+    types = set(bond_types)
     result = []
     for neighbour in G.adj[atom_idx]:
         data = G.get_edge_data(atom_idx, neighbour)
-        if data and data.get("bond_type") == "covalent":
+        if data and data.get("bond_type") in types:
             result.append(neighbour)
     return result
 
@@ -67,7 +80,7 @@ def _aromatic_membership(
         return True, rings
 
     if G.nodes[atom_idx].get("element") == 1:
-        for neighbour in _covalent_neighbors(G, atom_idx):
+        for neighbour in _covalent_neighbors(G, atom_idx, ("covalent",)):
             rings = _aromatic_rings_for_atom(G, neighbour)
             if rings:
                 return True, rings

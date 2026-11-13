@@ -59,6 +59,9 @@ def output(
     def fmt_ellipticity(d):
         return fmt_float(d, "ellipticity", 3)
 
+    def fmt_confidence(d):
+        return fmt_float(d, "confidence_score", 2)
+
     def cycle_numbers_to_string(arr):
         return ",".join(map(str, np.array(arr) + 1))
 
@@ -67,13 +70,14 @@ def output(
             "key": "HB",
             "title": "HYDROGEN BONDS",
             "header": [
-                "№", "Type", "D", "H", "A",
+                "№", "Type", "Confidence score", "D", "H", "A",
                 "D-H (Å)", "H···A (Å)", "D···A (Å)", "Angle (°)",
                 "ρ", "∇²ρ", "ε", "Energy",
             ],
             "row_func": lambda d, i: [
                 i + 1,
                 f"{d['donor_symbol']}-H···{d['acceptor_symbol']}",
+                fmt_confidence(d),
                 atom_number(d, "donor_num"),
                 atom_number(d, "hydrogen_num"),
                 atom_number(d, "acceptor_num"),
@@ -94,71 +98,139 @@ def output(
         {"key": "XB", "title": "HALOGEN BONDS"},
         {"key": "ChB", "title": "CHALCOGEN BONDS"},
         {"key": "PnB", "title": "PNICTOGEN BONDS"},
+        {"key": "TetB", "title": "TETREL BONDS"},
         {
             "key": "stacking",
             "title": "PARALLEL STACKING",
             "header": [
-                "№", "Ring 1", "Ring 2",
+                "№", "Confidence score", "Ring 1", "Ring 2",
                 "Centroid (Å)", "Offset (Å)", "Angle (°)",
+                "ρ", "∇²ρ", "ε",
             ],
             "row_func": lambda d, i: [
                 i + 1,
+                fmt_confidence(d),
                 cycle_numbers_to_string(d["ring_1"]),
                 cycle_numbers_to_string(d["ring_2"]),
                 fmt_distance(d, "centroid_distance"),
                 fmt_distance(d, "offset"),
                 fmt_float(d, "angle", 1),
+                fmt_rho(d), fmt_laplacian(d), fmt_ellipticity(d),
             ],
         },
         {
             "key": "H-pi",
             "title": "X-H···π INTERACTIONS",
             "header": [
-                "№", "Type", "X", "H", "Ring",
+                "№", "Type", "Confidence score", "X", "H", "Ring",
                 "H···π (Å)", "Angle (°)", "Projection (Å)",
+                "ρ", "∇²ρ", "ε",
             ],
             "row_func": lambda d, i: [
                 i + 1,
                 f"{d['symbol_x']}-H···π",
+                fmt_confidence(d),
                 atom_number(d, "x_num"),
                 atom_number(d, "h_num"),
                 cycle_numbers_to_string(d["ring"]),
                 fmt_distance(d, "h_centroid_distance"),
                 fmt_float(d, "angle", 1),
                 fmt_distance(d, "projection_distance"),
+                fmt_rho(d), fmt_laplacian(d), fmt_ellipticity(d),
             ],
         },
         {
             "key": "n-pi",
             "title": "LONE PAIR···π",
             "header": [
-                "№", "Type", "Atom", "Ring",
-                "Distance (Å)", "Angle (°)",
+                "№", "Type", "Confidence score", "Atom", "Ring",
+                "Distance (Å)", "Angle (°)", "ρ", "∇²ρ", "ε",
             ],
             "row_func": lambda d, i: [
                 i + 1,
                 f"{d['symbol_lp']}···π",
+                fmt_confidence(d),
                 atom_number(d, "lp_num"),
                 cycle_numbers_to_string(d["ring"]),
                 fmt_distance(d, "lp_centroid_distance"),
                 fmt_float(d, "angle", 1),
+                fmt_rho(d), fmt_laplacian(d), fmt_ellipticity(d),
+            ],
+        },
+        {
+            "key": "X-pi",
+            "title": "R-X···π INTERACTIONS",
+            "header": [
+                "№", "Type", "Confidence score", "R", "X", "Ring",
+                "X···π (Å)", "Angle (°)", "Angle to normal (°)",
+                "ρ", "∇²ρ", "ε",
+            ],
+            "row_func": lambda d, i: [
+                i + 1,
+                f"{d['symbol_r']}-{d['symbol_x']}···π",
+                fmt_confidence(d),
+                atom_number(d, "r_num"),
+                atom_number(d, "x_num"),
+                cycle_numbers_to_string(d["ring"]),
+                fmt_distance(d, "x_centroid_distance"),
+                fmt_float(d, "angle", 1),
+                fmt_float(d, "angle_to_normal", 1),
+                fmt_rho(d), fmt_laplacian(d), fmt_ellipticity(d),
+            ],
+        },
+        {
+            "key": "ion-pi",
+            "title": "ION···π INTERACTIONS",
+            "header": [
+                "№", "Type", "Confidence score", "Ion", "Ring",
+                "Distance (Å)", "Angle to normal (°)",
+                "ρ", "∇²ρ", "ε",
+            ],
+            "row_func": lambda d, i: [
+                i + 1,
+                f"{d['symbol_ion']}···π",
+                fmt_confidence(d),
+                atom_number(d, "ion_num"),
+                cycle_numbers_to_string(d["ring"]),
+                fmt_distance(d, "ion_centroid_distance"),
+                fmt_float(d, "angle_to_normal", 1),
+                fmt_rho(d), fmt_laplacian(d), fmt_ellipticity(d),
+            ],
+        },
+        {
+            "key": "metallophilic",
+            "title": "METALLOPHILIC INTERACTIONS",
+            "header": [
+                "№", "Type", "Confidence score", "Metal 1", "Metal 2",
+                "Distance (Å)", "ρ", "∇²ρ", "ε",
+            ],
+            "row_func": lambda d, i: [
+                i + 1,
+                f"{d['metal_sym_1']}···{d['metal_sym_2']}",
+                fmt_confidence(d),
+                atom_number(d, "metal_1"),
+                atom_number(d, "metal_2"),
+                fmt_distance(d, "distance"),
+                fmt_rho(d), fmt_laplacian(d), fmt_ellipticity(d),
             ],
         },
         {
             "key": "carbonyl",
             "title": "CARBONYL n→π*",
             "header": [
-                "№", "Type", "Donor", "Acceptor C", "C=O",
-                "Distance (Å)", "BD angle (°)", "Plane angle (°)",
-                "ρ", "∇²ρ", "ε",
+                "№", "Type", "Confidence score", "Donor", "Acceptor C",
+                "C=O", "Distance (Å)", "BD angle (°)", "Angle RAC (°)",
+                "Plane angle (°)", "ρ", "∇²ρ", "ε",
             ],
             "row_func": lambda d, i: [
                 i + 1, "n→π*",
+                fmt_confidence(d),
                 atom_number(d, "donor_oxygen"),
                 atom_number(d, "acceptor_carbon"),
                 atom_number(d, "carbonyl_oxygen"),
                 fmt_distance(d, "distance"),
                 fmt_float(d, "burgi_dunitz_angle", 1),
+                fmt_float(d, "angle_rac", 1),
                 fmt_float(d, "plane_angle", 1),
                 fmt_rho(d), fmt_laplacian(d), fmt_ellipticity(d),
             ],
@@ -167,13 +239,14 @@ def output(
             "key": "dihydrogen",
             "title": "DIHYDROGEN CONTACTS (H···H)",
             "header": [
-                "№", "Type", "H 1", "H 2", "D 1", "D 2", "H···H (Å)",
-                "ρ", "∇²ρ", "ε",
+                "№", "Type", "Confidence score", "H 1", "H 2",
+                "D 1", "D 2", "H···H (Å)", "ρ", "∇²ρ", "ε",
             ],
             "row_func": lambda d, i: [
                 i + 1,
                 f"{d.get('donor1_symbol') or '—'}-H···H-"
                 f"{d.get('donor2_symbol') or '—'}",
+                fmt_confidence(d),
                 atom_number(d, "h1_num"),
                 atom_number(d, "h2_num"),
                 atom_number(d, "donor1_num"),
@@ -204,17 +277,18 @@ def output(
 
     # Heavy-atom σ-hole sections
     heavy_headers = [
-        "№", "Type", "X", "E", "Nu",
+        "№", "Type", "Confidence score", "X", "E", "Nu",
         "E···Nu (Å)", "Angle (°)", "ρ", "∇²ρ", "ε",
     ]
     for section in sections:
-        if section["key"] in {"XB", "ChB", "PnB"}:
+        if section["key"] in {"XB", "ChB", "PnB", "TetB"}:
             section["header"] = heavy_headers
             section["row_func"] = lambda d, i: [
                 i + 1,
                 f"{d.get('neighbor_symbol', '—')}-"
                 f"{d.get('electrophile_symbol', '—')}···"
                 f"{d.get('nucleophile_symbol', '—')}",
+                fmt_confidence(d),
                 atom_number(d, "neighbor_num"),
                 atom_number(d, "electrophile_num"),
                 atom_number(d, "nucleophile_num"),

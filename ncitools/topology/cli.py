@@ -25,6 +25,7 @@ from ncitools.topology import (
     find_nci_with_aromatic,
     find_sigma_hole_interactions,
     find_carbonyl_interactions,
+    find_metallophilic_interactions,
     find_dihydrogen_interactions,
     find_unclassified_interactions,
     prepare_graph_for_nci,
@@ -33,9 +34,9 @@ from ncitools.topology import (
 
 
 _INTERACTION_TYPES = [
-    "HB", "XB", "ChB", "PnB",
-    "stacking", "H-pi", "n-pi",
-    "carbonyl", "dihydrogen", "unclassified",
+    "HB", "XB", "ChB", "PnB", "TetB",
+    "stacking", "H-pi", "n-pi", "X-pi", "ion-pi",
+    "metallophilic", "carbonyl", "dihydrogen", "unclassified",
 ]
 
 
@@ -228,14 +229,23 @@ def topology(
     # ------------------------------------------------------------------ #
     skipped = set(skip)
 
-    if not {"stacking", "H-pi", "n-pi"}.issubset(skipped):
-        G = find_nci_with_aromatic(bcps_nci, G, cube.atoms)
+    aromatic_families = {"stacking", "H-pi", "n-pi", "X-pi", "ion-pi"}
+    if not aromatic_families.issubset(skipped):
+        G = find_nci_with_aromatic(
+            bcps_nci, G, cube.atoms, skipped=frozenset(skipped),
+        )
 
-    if not {"HB", "XB", "ChB", "PnB"}.issubset(skipped):
-        G = find_sigma_hole_interactions(bcps_nci, G, cube.atoms)
+    sigma_hole_families = {"HB", "XB", "ChB", "PnB", "TetB"}
+    if not sigma_hole_families.issubset(skipped):
+        G = find_sigma_hole_interactions(
+            bcps_nci, G, cube.atoms, skipped=frozenset(skipped),
+        )
 
     if "carbonyl" not in skipped:
         G = find_carbonyl_interactions(bcps_nci, G, cube.atoms)
+
+    if "metallophilic" not in skipped:
+        G = find_metallophilic_interactions(bcps_nci, G, cube.atoms)
 
     if "dihydrogen" not in skipped:
         G = find_dihydrogen_interactions(bcps_nci, G, cube.atoms)

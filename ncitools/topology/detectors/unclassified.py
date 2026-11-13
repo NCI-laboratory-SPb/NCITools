@@ -52,8 +52,9 @@ def find_unclassified_interactions(
 
         if _edge_has_type(
             G, i, j,
-            {"HB", "XB", "ChB", "PnB", "stacking", "T-stacking",
-             "H-pi", "n-pi", "carbonyl", "dihydrogen"},
+            {"HB", "XB", "ChB", "PnB", "TetB", "stacking",
+             "H-pi", "n-pi", "X-pi", "ion-pi", "metallophilic",
+             "carbonyl", "dihydrogen"},
         ):
             continue
 
@@ -64,7 +65,7 @@ def find_unclassified_interactions(
 
         if aromatic1 and aromatic2:
             skip = any(
-                _edge_has_type(G, ri, rj, {"stacking", "T-stacking"})
+                _edge_has_type(G, ri, rj, {"stacking"})
                 for ri in rings1 for rj in rings2
             )
             if skip:

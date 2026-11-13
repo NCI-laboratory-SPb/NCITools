@@ -1,4 +1,4 @@
-"""σ-hole interactions from BCPs: HB, XB, ChB, PnB."""
+"""σ-hole interactions from BCPs: HB, XB, ChB, PnB, TetB."""
 
 from __future__ import annotations
 
@@ -13,6 +13,12 @@ from tqdm import tqdm
 from ncitools.constants import BOHR_TO_ANGSTROM, ANGSTROM_TO_BOHR, BONDI
 from ncitools.utils import get_symbol
 
+from ..soft import (
+    HB_ANGLE_THRESHOLD,
+    SIGMA_HOLE_ANGLE_THRESHOLD,
+    ase_atoms,
+    sigma_hole_score,
+)
 from ..topology import _angle, _bcp_properties
 from ._common import (
     _collect_classified_bcp_positions,
@@ -26,18 +32,22 @@ def find_sigma_hole_interactions(
     G: nx.Graph,
     atoms: List[Tuple[int, np.ndarray]],
     position_tolerance: float = 0.10,
+    skipped: frozenset = frozenset(),
 ) -> nx.Graph:
     """
-    Add HB / XB / ChB / PnB interactions from BCPs.
+    Add HB / XB / ChB / PnB / TetB interactions from BCPs.
 
     BCPs whose position is already represented in the graph
-    (e.g. by the aromatic detector) are skipped.
+    (e.g. by the aromatic detector) are skipped.  Families listed in
+    ``skipped`` are ignored, so their BCPs fall through to the
+    ``unclassified`` detector.
     """
     if not bcps:
         return G
 
     coordinates = np.asarray([atom[1] for atom in atoms], dtype=float)
     symbols = [get_symbol(atom[0]) for atom in atoms]
+    ase = ase_atoms(atoms)
 
     classified_positions = _collect_classified_bcp_positions(G)
     tree = cKDTree(np.asarray(classified_positions)) if classified_positions else None
@@ -64,6 +74,8 @@ def find_sigma_hole_interactions(
 
         # --- Hydrogen bonds ---
         if is_h1 or is_h2:
+            if "HB" in skipped:
+                continue
             if is_h1:
                 h_idx, acceptor_idx = atom1_idx, atom2_idx
             else:
@@ -84,6 +96,12 @@ def find_sigma_hole_interactions(
             H_A = norm(H - A) * BOHR_TO_ANGSTROM
             D_A = norm(D - A) * BOHR_TO_ANGSTROM
             hb_angle = _angle(D, H, A)
+            if hb_angle is None:
+                continue
+
+            confidence, angle_xay = sigma_hole_score(
+                ase, G, h_idx, acceptor_idx, hb_angle, HB_ANGLE_THRESHOLD,
+            )
 
             attrs = {
                 "bond_type": "HB",
@@ -96,6 +114,8 @@ def find_sigma_hole_interactions(
                 "heavy_atom_distance": float(D_A),
                 "angle": float(hb_angle),
                 "h_donor_distance": float(D_H),
+                "angle_xay": angle_xay,
+                "confidence_score": confidence,
             }
             attrs.update(_bcp_properties(bcp))
             G.add_edge(h_idx, acceptor_idx, **attrs)
@@ -129,7 +149,12 @@ def find_sigma_hole_interactions(
             bond_type = "ChB"
         elif electrophile_symbol in {"N", "P", "As", "Sb", "Bi"}:
             bond_type = "PnB"
+        elif electrophile_symbol in {"Si", "Ge", "Sn", "Pb"}:
+            bond_type = "TetB"
         else:
+            continue
+
+        if bond_type in skipped:
             continue
 
         electrophile_neighbours = _covalent_neighbors(G, electrophile_idx)
@@ -151,6 +176,11 @@ def find_sigma_hole_interactions(
         if contact_angle < 140.0:
             continue
 
+        confidence, angle_xay = sigma_hole_score(
+            ase, G, electrophile_idx, nucleophile_idx,
+            contact_angle, SIGMA_HOLE_ANGLE_THRESHOLD,
+        )
+
         attrs = {
             "bond_type": bond_type,
             "neighbor_num": int(neighbour_num),
@@ -161,6 +191,8 @@ def find_sigma_hole_interactions(
             "nucleophile_symbol": symbols[nucleophile_idx],
             "distance": float(distance),
             "angle": float(contact_angle),
+            "angle_xay": angle_xay,
+            "confidence_score": confidence,
         }
         attrs.update(_bcp_properties(bcp))
         G.add_edge(atom1_idx, atom2_idx, **attrs)

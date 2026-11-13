@@ -13,6 +13,7 @@ from tqdm import tqdm
 from ncitools.constants import BOHR_TO_ANGSTROM, ANGSTROM_TO_BOHR
 from ncitools.utils import get_symbol
 
+from ..soft import ase_atoms, carbonyl_score
 from ..topology import _angle, _bcp_properties
 from ._common import (
     _collect_classified_bcp_positions,
@@ -70,14 +71,18 @@ def find_carbonyl_interactions(
 
     Geometry:
         donor Y ... C=O
-        Y···C ≤ 3.22 Å
-        Y···C–O angle = 95–125°
+        Y···C ≤ ``distance_cutoff``
+        Y···C–O angle inside ``angle_min``–``angle_max``
+
+    The confidence score mirrors the geometry detector, so the same contact
+    receives the same value in both modules.
     """
     if not bcps:
         return G
 
     coordinates = np.asarray([atom[1] for atom in atoms], dtype=float)
     symbols = [get_symbol(atom[0]) for atom in atoms]
+    ase = ase_atoms(atoms)
     carbonyls = _identify_carbonyl_carbons(G, atoms)
 
     classified_positions = _collect_classified_bcp_positions(G)
@@ -141,6 +146,10 @@ def find_carbonyl_interactions(
                         )
                     )
 
+        confidence, angle_rac = carbonyl_score(
+            ase, G, donor_oxygen, acceptor_carbon, float(angle),
+        )
+
         attrs = {
             "bond_type": "carbonyl",
             "donor_oxygen": int(donor_oxygen),
@@ -151,6 +160,8 @@ def find_carbonyl_interactions(
             "distance": float(distance),
             "burgi_dunitz_angle": float(angle),
             "plane_angle": None if plane_angle is None else float(plane_angle),
+            "angle_rac": angle_rac,
+            "confidence_score": confidence,
         }
         attrs.update(_bcp_properties(bcp))
         G.add_edge(donor_oxygen, acceptor_carbon, **attrs)

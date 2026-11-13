@@ -13,6 +13,7 @@ from tqdm import tqdm
 from ncitools.constants import ANGSTROM_TO_BOHR, BOHR_TO_ANGSTROM
 from ncitools.utils import get_symbol
 
+from ..soft import dihydrogen_score
 from ..topology import _bcp_properties
 from ._common import (
     _collect_classified_bcp_positions,
@@ -26,7 +27,7 @@ def _heavy_partner(
     symbols: List[str],
 ) -> Optional[int]:
     """Heavy atom a hydrogen is covalently bound to, if any."""
-    for neighbour in _covalent_neighbors(G, idx):
+    for neighbour in _covalent_neighbors(G, idx, ("covalent",)):
         if symbols[neighbour] != "H":
             return neighbour
     return None
@@ -36,19 +37,16 @@ def find_dihydrogen_interactions(
     bcps: List[Dict],
     G: nx.Graph,
     atoms: List[Tuple[int, np.ndarray]],
-    distance_cutoff: float = 2.4,
     position_tolerance: float = 0.10,
     exclude_geminal: bool = True,
 ) -> nx.Graph:
     """
     Detect dihydrogen (H···H) contacts.
 
-    A BCP whose two atoms are hydrogens that are not covalently bound
-    belongs to this family when the H···H distance does not exceed
-    ``distance_cutoff`` (Å).  The default 2.4 Å is the sum of two
-    hydrogen van der Waals radii, so genuine dihydrogen contacts
-    (typically 1.7-2.4 Å) pass and ordinary non-bonded H···H pairs in
-    the 2.5-3.5 Å range do not.
+    A BCP whose two atoms are hydrogens that are not covalently bound is the
+    only requirement: the contact may be very weak, so no distance cutoff is
+    applied.  The confidence score is distance-only (a sigmoid centred on
+    the sum of two BONDI hydrogen radii).
 
     With ``exclude_geminal`` the two hydrogens must not be attached to
     the same heavy atom: a geminal H-C-H pair is a covalent feature of
@@ -78,8 +76,6 @@ def find_dihydrogen_interactions(
             continue
 
         distance = norm(coordinates[i] - coordinates[j]) * BOHR_TO_ANGSTROM
-        if distance > distance_cutoff:
-            continue
 
         donor1 = _heavy_partner(G, i, symbols)
         donor2 = _heavy_partner(G, j, symbols)
@@ -99,6 +95,7 @@ def find_dihydrogen_interactions(
             "donor1_symbol": None if donor1 is None else symbols[donor1],
             "donor2_symbol": None if donor2 is None else symbols[donor2],
             "distance": float(distance),
+            "confidence_score": dihydrogen_score(float(distance)),
         }
         attrs.update(_bcp_properties(bcp))
         G.add_edge(i, j, **attrs)
