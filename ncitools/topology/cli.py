@@ -104,10 +104,10 @@ def _print_summary(G: nx.Graph) -> None:
 @click.option("--projection-margin", default=0.20, show_default=True, type=float)
 @click.option("--max-line-fraction", default=0.35, show_default=True, type=float)
 @click.option(
-    "--min-alignment", default=0.8, show_default=True,
+    "--min-alignment", default=0.9, show_default=True,
     type=click.FloatRange(0.0, 1.0),
     help="Minimum |cos| between the A–B direction and the positive "
-         "Hessian eigenvector. Use 0 to disable the hard filter.",
+         "Hessian eigenvector (hard gate). Use 0 to disable it.",
 )
 @click.option(
     "--rho-covalent-threshold", default=0.089,

@@ -563,7 +563,7 @@ def valid_bcp_pair_geometry(
     min_angle: float = 140.0,
     projection_margin: float = 0.20,
     max_line_fraction: float = 0.35,
-    min_alignment: Optional[float] = None,
+    min_alignment: Optional[float] = 0.9,
 ) -> bool:
     """
     Decide whether a CP is geometrically associated with A-B.
@@ -573,8 +573,7 @@ def valid_bcp_pair_geometry(
 
     ``min_alignment`` is an optional additional filter on the cosine
     between the A-B direction and the positive Hessian eigenvector.
-    It is disabled by default to keep the pure-proximity behaviour;
-    the BCP search pipeline enables it explicitly.
+    ``None`` disables it, keeping pure proximity behaviour.
     """
     if geometry is None:
         return False
@@ -782,25 +781,20 @@ def _search_pair_worker(args: Tuple[int, int, np.ndarray, np.ndarray, Dict]) -> 
 # Global BCP deduplication
 # ----------------------------------------------------------------------------
 
-def _compute_bcp_score(bcp: Dict) -> Tuple[float, float]:
+def _compute_bcp_score(bcp: Dict) -> float:
     """
-    Lexicographic ranking key for a BCP candidate. Lower is better.
+    Geometric penalty for a BCP candidate. Lower is better.
 
-    The primary component is ``1 - alignment`` so that the
-    eigenvector/atom-pair alignment dominates the choice.  The secondary
-    component is the unchanged geometric proximity score: distance,
-    angle, line and projection penalties.
+    Alignment is deliberately not part of this score: it is a hard gate
+    applied in :func:`valid_bcp_pair_geometry` before a candidate reaches
+    deduplication.  Among the pairs that pass the gate, the one whose
+    atoms give the most bond-like geometry (distance, angle, line and
+    projection penalties) is selected.
     """
-    alignment = bcp.get("alignment")
-    alignment_penalty = (
-        1.0 if alignment is None
-        else 1.0 - float(np.clip(alignment, 0.0, 1.0))
-    )
-
     distance_penalty = bcp["distance_a"] + bcp["distance_b"]
     angle = bcp["pair_angle"]
     if angle is None:
-        return (alignment_penalty, float("inf"))
+        return float("inf")
     angle_penalty = (180.0 - angle) / 40.0
     line_penalty = bcp["line_distance"] / max(bcp["pair_distance"], 1.0e-8)
     proj = bcp["projection_fraction"]
@@ -810,10 +804,7 @@ def _compute_bcp_score(bcp: Dict) -> Tuple[float, float]:
     elif proj > 1.0:
         proj_penalty += proj - 1.0
 
-    geometry_score = (
-        distance_penalty + line_penalty + angle_penalty + proj_penalty
-    )
-    return (alignment_penalty, geometry_score)
+    return distance_penalty + line_penalty + angle_penalty + proj_penalty
 
 
 def deduplicate_bcps(
@@ -824,8 +815,9 @@ def deduplicate_bcps(
     Globally deduplicate BCP candidates by position.
 
     For each cluster of CPs within position_tol_bohr, keep the one
-    with the best pair assignment.  Alignment with the positive
-    Hessian eigenvector dominates; the geometry score breaks ties.
+    with the best geometric score (closest atoms, most bond-like
+    geometry).  All candidates have already passed the alignment gate
+    in :func:`valid_bcp_pair_geometry`.
 
     Returns a list of unique BCPs.
     """
@@ -896,7 +888,7 @@ def find_bcps_parallel(
     min_bcp_angle: float = 140.0,
     projection_margin: float = 0.20,
     max_line_fraction: float = 0.35,
-    min_alignment: Optional[float] = 0.8,
+    min_alignment: Optional[float] = 0.9,
     max_step_angstrom: float = 0.75,
     dedup_tol_angstrom: float = 0.03,
 ) -> List[Dict]:
@@ -909,9 +901,10 @@ def find_bcps_parallel(
     ``min_alignment`` is the minimum absolute cosine between the A-B
     direction and the eigenvector of the single positive Hessian
     eigenvalue (``[0, 1]``; higher means more collinear).  It acts as a
-    hard filter on pair assignment.  Lower it (for example to 0.6-0.7)
-    if real BCPs are lost to spline noise; set it to ``None`` to disable
-    the filter.
+    hard filter on pair assignment; pairs that pass it are ranked by
+    their geometric score.  Lower it (for example to 0.6-0.7) if real
+    BCPs are lost to spline noise; set it to ``None`` to disable the
+    filter.
     """
     pairs = generate_candidate_pairs(atoms, bcp_search_radius)
     if not pairs:

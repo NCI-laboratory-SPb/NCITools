@@ -118,24 +118,28 @@ def _geometry(alignment=None, angle=180.0, fraction=0.5, line_distance=0.0,
 
 
 def test_proximity_checks_are_unchanged():
-    assert valid_bcp_pair_geometry(_geometry())
-    assert not valid_bcp_pair_geometry(_geometry(angle=120.0))
-    assert not valid_bcp_pair_geometry(_geometry(fraction=-0.3))
-    assert not valid_bcp_pair_geometry(_geometry(fraction=1.3))
+    assert valid_bcp_pair_geometry(_geometry(), min_alignment=None)
+    assert not valid_bcp_pair_geometry(_geometry(angle=120.0), min_alignment=None)
+    assert not valid_bcp_pair_geometry(_geometry(fraction=-0.3), min_alignment=None)
+    assert not valid_bcp_pair_geometry(_geometry(fraction=1.3), min_alignment=None)
     # max_line_fraction * atom_distance == 0.7
-    assert not valid_bcp_pair_geometry(_geometry(line_distance=0.8))
-    assert valid_bcp_pair_geometry(_geometry(line_distance=0.6))
+    assert not valid_bcp_pair_geometry(
+        _geometry(line_distance=0.8), min_alignment=None
+    )
+    assert valid_bcp_pair_geometry(
+        _geometry(line_distance=0.6), min_alignment=None
+    )
 
 
-def test_alignment_filter_is_optional():
+def test_alignment_filter_can_be_disabled():
     # No alignment supplied and no threshold: pure proximity.
-    assert valid_bcp_pair_geometry(_geometry(alignment=None))
+    assert valid_bcp_pair_geometry(_geometry(alignment=None), min_alignment=None)
 
 
 def test_alignment_filter_rejects_low_and_missing_values():
-    assert valid_bcp_pair_geometry(_geometry(alignment=0.9), min_alignment=0.8)
-    assert not valid_bcp_pair_geometry(_geometry(alignment=0.5), min_alignment=0.8)
-    assert not valid_bcp_pair_geometry(_geometry(alignment=None), min_alignment=0.8)
+    assert valid_bcp_pair_geometry(_geometry(alignment=0.95), min_alignment=0.9)
+    assert not valid_bcp_pair_geometry(_geometry(alignment=0.85), min_alignment=0.9)
+    assert not valid_bcp_pair_geometry(_geometry(alignment=None), min_alignment=0.9)
 
 
 # --------------------------------------------------------------------------- #
@@ -159,32 +163,51 @@ def _bcp(alignment, distance_a=1.0, distance_b=1.0, angle=180.0,
     }
 
 
-def test_alignment_dominates_geometry_score():
-    # Aligned candidate has worse proximity, but must still rank first.
-    aligned = _bcp(0.99, distance_a=3.0, distance_b=3.0, angle=170.0,
-                   line_distance=0.5)
-    misaligned = _bcp(0.10, distance_a=0.1, distance_b=0.1, angle=180.0,
-                      line_distance=0.0)
+def test_geometry_score_is_alignment_independent():
+    # Alignment is a hard gate, not part of the ranking key.
+    well_aligned = _bcp(0.99, distance_a=1.0, distance_b=1.0)
+    poorly_aligned = _bcp(0.50, distance_a=1.0, distance_b=1.0)
+    without_alignment = _bcp(None, distance_a=1.0, distance_b=1.0)
 
-    assert _compute_bcp_score(aligned) < _compute_bcp_score(misaligned)
-
-
-def test_missing_alignment_ranks_last():
-    without_alignment = _bcp(None)
-    with_alignment = _bcp(0.5)
-
-    assert _compute_bcp_score(with_alignment) < _compute_bcp_score(without_alignment)
+    assert _compute_bcp_score(well_aligned) == pytest.approx(
+        _compute_bcp_score(poorly_aligned)
+    )
+    assert _compute_bcp_score(well_aligned) == pytest.approx(
+        _compute_bcp_score(without_alignment)
+    )
 
 
-def test_deduplicate_picks_the_aligned_pair():
-    aligned = _bcp(0.99, atom1=0, atom2=1)
-    misaligned = _bcp(0.10, atom1=0, atom2=2)
+def test_geometry_score_prefers_closer_bond_like_pair():
+    close = _bcp(0.99, distance_a=1.0, distance_b=1.0)
+    far = _bcp(0.99, distance_a=3.0, distance_b=3.0)
 
-    result = deduplicate_bcps([misaligned, aligned], position_tol_bohr=0.05)
+    assert _compute_bcp_score(close) < _compute_bcp_score(far)
+
+
+def test_deduplicate_picks_best_geometry_not_highest_alignment():
+    # Regression for a linear O-H...N contact: the heavy-atom N...O pair
+    # is marginally better aligned (spline noise), but the BCP lies on
+    # the H...N bond path, so the hydrogen pair must win.
+    hydrogen_bond = _bcp(
+        0.9995, distance_a=0.5, distance_b=1.5, atom1=0, atom2=1,
+    )
+    heavy_atom = _bcp(
+        0.9999, distance_a=1.48, distance_b=1.48, atom1=2, atom2=3,
+    )
+
+    result = deduplicate_bcps([heavy_atom, hydrogen_bond], position_tol_bohr=0.05)
 
     assert len(result) == 1
-    assert result[0]["atom2"] == 1
-    assert result[0]["alignment"] == pytest.approx(0.99)
+    assert {result[0]["atom1"], result[0]["atom2"]} == {0, 1}
+
+
+def test_default_min_alignment_is_0_9():
+    import inspect
+
+    import ncitools.topology.topology as topology_module
+
+    signature = inspect.signature(topology_module.find_bcps_parallel)
+    assert signature.parameters["min_alignment"].default == pytest.approx(0.9)
 
 
 def test_deduplicate_keeps_distinct_positions():
