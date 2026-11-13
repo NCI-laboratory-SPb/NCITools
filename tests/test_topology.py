@@ -555,6 +555,25 @@ def test_dihydrogen_prevents_unclassified_fallback():
     )
 
 
+def test_output_header_uses_input_file(tmp_path):
+    from ncitools.topology.output import output
+
+    atoms, G, bcp = _two_methyls(2.2)
+    G = find_dihydrogen_interactions([bcp], G, atoms)
+
+    report = output(
+        G, filename=str(tmp_path / "PnB_1_cube"), ext=".cub",
+        input_file=r"C:\data\PnB_1.cub",
+    )
+    header = open(report, encoding="utf-8").read().splitlines()
+    assert header[2] == r"Input file: C:\data\PnB_1.cub"
+
+    # Without input_file the header keeps the old basename+ext behaviour.
+    fallback = output(G, filename=str(tmp_path / "dih"), ext=".cub")
+    header = open(fallback, encoding="utf-8").read().splitlines()
+    assert header[2] == f"Input file: {tmp_path / 'dih'}.cub"
+
+
 def test_output_renders_dihydrogen_section(tmp_path):
     from ncitools.topology.output import output
 

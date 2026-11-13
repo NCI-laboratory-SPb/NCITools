@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 import textwrap
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Optional
 
 import networkx as nx
 import numpy as np
@@ -20,8 +20,16 @@ def output(
     filename: str = "default",
     ext: str = ".cube",
     correlation=correlation_1,
+    input_file: Optional[str] = None,
 ) -> str:
-    """Write a .nci report. All distances are written in Angstrom."""
+    """
+    Write a .nci report. All distances are written in Angstrom.
+
+    ``filename`` is the output basename; ``.nci`` is appended to it.
+    ``input_file`` is the structure the analysis started from and is
+    only echoed in the report header.  When it is omitted the header
+    falls back to ``filename + ext``.
+    """
     now = datetime.now()
 
     edges_by_type: Dict[str, list] = {}
@@ -219,7 +227,8 @@ def output(
     with open(output_filename, "w", encoding="utf-8") as f:
         f.write("NCITools: Topological analysis of electron density\n")
         f.write(f"Date: {now.strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"Input file: {filename}{ext}\n")
+        source = input_file if input_file is not None else f"{filename}{ext}"
+        f.write(f"Input file: {source}\n")
 
         for section in sections:
             interaction_edges = edges_by_type.get(section["key"], [])

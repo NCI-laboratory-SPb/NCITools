@@ -253,7 +253,9 @@ def topology(
     input_ext = os.path.splitext(input_file)[1]
 
     click.echo(f"Writing results to: {output}.nci")
-    topology_output(G, filename=output, ext=input_ext)
+    topology_output(
+        G, filename=output, ext=input_ext, input_file=input_file,
+    )
 
     click.echo("\nAnalysis completed.")
 
