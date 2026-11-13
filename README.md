@@ -202,6 +202,10 @@ Columns for other families can be interpreted in the same fashion.
 
 NCITools automatically checks your structure for potential chemical and geometrical anomalies. If any issues are detected, a report is generated and saved in a separate file named `my_structure_warnings.nci`.
 
+> [!IMPORTANT]
+> File `my_structure_warnings.nci` only provides information about possible anomalies in your structure, but it does not affect further NCITools analysis in any way.
+
+
 **1. Atomic Connectivity (Valence)**
 
 By default, the script checks the covalent graph for atoms exhibiting an unusual number of neighbours (e.g., a carbon atom with 5 covalent bonds or hydrogen with 2). This helps identify poorly optimized geometries or incorrect Van der Waals radii settings.
@@ -215,13 +219,14 @@ The atomic connectivity warnings report is written in the file my_structure_warn
 
 **2. Spatial Clashes (`--clash`)**
 
+NCITools can perform an analysis to detect physically impossible overlaps, such as intersecting chemical bonds or steric clashes.
+If you are confident in your structure, you can skip the recommendation below and warnings in the file.
+
 ***Because this mathematical calculation is computationally intensive, it is turned off by default.***
 
 > [!TIP]
 > We highly recommend running your structure with the `--clash` flag at least once before analyzing the NCI results to ensure your input geometry is physically valid.
 
-NCITools can perform an analysis to detect physically impossible overlaps, such as intersecting chemical bonds or steric clashes.
-If you are confident in your structure, you can skip the recommendation below and warnings in the file.
 
 The terminal output will look like this:
 
@@ -230,9 +235,6 @@ The terminal output will look like this:
 The spatial proximity warnings report is written in the file my_structure_warnings.nci
 ```
 
-
-> [!IMPORTANT]
-> File `my_structure_warnings.nci` only provides information about possible anomalies in your structure, but it does not affect further NCITools analysis in any way.
 
 ---
 
