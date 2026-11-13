@@ -218,7 +218,8 @@ If you are confident in your structure, you can skip the recommendation below an
 
 <u> Because this mathematical calculation is computationally intensive, it is turned off by default.</u>
 
-<span style="color: orange;">**Recommendation:** We highly recommend running your structure with the `--clash` flag at least once before analyzing the NCI results to ensure your input geometry is physically valid.</span>
+> [!TIP]
+> **We highly recommend running your structure with the `--clash` flag at least once before analyzing the NCI results to ensure your input geometry is physically valid.**
 
 The terminal output will look like this:
 
