@@ -40,13 +40,15 @@ For every structure NCITools detects:
 *   **Metallophilic-like contacts** (Au, Ag, Cu, Hg, Ir, Pt, Pd, Ni)
 *   **Carbonyl n→π\* contacts** (Bürgi–Dunitz geometry)
 
-Each contact is scored by a **soft (fuzzy) confidence value** in `[0, 1]`, obtained as the product of smooth geometric criteria (distance, two angles). A contact is reported only if its score exceeds a user-supplied threshold. Default is **0.75**.
+> [!NOTE]
+> Each contact is scored by a **soft (fuzzy) confidence value** in `[0, 1]`, obtained as the product of smooth geometric criteria (distance, two angles). A contact is reported only if its score exceeds a user-supplied threshold. Default is **0.75**.
 
 ### What is the Confidence Score and how to interpret it?
 
 The **Confidence Score** is a number between 0 and 1 that indicates how closely the found geometric pattern resembles an “ideal” interaction of that type.
 
-**Important:** it is **not a probability** in a statistical sense and **not a guarantee** that the interaction exists. It is a measure of the “geometric purity” of the contact.
+> [!IMPORTANT]
+> It is **not a probability** in a statistical sense and **not a guarantee** that the interaction exists. It is a measure of the “geometric purity” of the contact.
 
 **Interpretation:**
 
@@ -200,6 +202,10 @@ Columns for other families can be interpreted in the same fashion.
 
 NCITools automatically checks your structure for potential chemical and geometrical anomalies. If any issues are detected, a report is generated and saved in a separate file named `my_structure_warnings.nci`.
 
+> [!IMPORTANT]
+> File `my_structure_warnings.nci` only provides information about possible anomalies in your structure, but it does not affect further NCITools analysis in any way.
+
+
 **1. Atomic Connectivity (Valence)**
 
 By default, the script checks the covalent graph for atoms exhibiting an unusual number of neighbours (e.g., a carbon atom with 5 covalent bonds or hydrogen with 2). This helps identify poorly optimized geometries or incorrect Van der Waals radii settings.
@@ -207,7 +213,7 @@ By default, the script checks the covalent graph for atoms exhibiting an unusual
 The terminal output will look like this:
 
 ```
-[!]Your structure has several atoms with an unusual number of neighbours:
+[!] Your structure has several atoms with an unusual number of neighbours:
 The atomic connectivity warnings report is written in the file my_structure_warnings.nci
 ```
 
@@ -216,9 +222,11 @@ The atomic connectivity warnings report is written in the file my_structure_warn
 NCITools can perform an analysis to detect physically impossible overlaps, such as intersecting chemical bonds or steric clashes.
 If you are confident in your structure, you can skip the recommendation below and warnings in the file.
 
-<u> Because this mathematical calculation is computationally intensive, it is turned off by default.</u>
+***Because this mathematical calculation is computationally intensive, it is turned off by default.***
 
-<span style="color: orange;">**Recommendation:** We highly recommend running your structure with the `--clash` flag at least once before analyzing the NCI results to ensure your input geometry is physically valid.</span>
+> [!TIP]
+> We highly recommend running your structure with the `--clash` flag at least once before analyzing the NCI results to ensure your input geometry is physically valid.
+
 
 The terminal output will look like this:
 
@@ -227,7 +235,6 @@ The terminal output will look like this:
 The spatial proximity warnings report is written in the file my_structure_warnings.nci
 ```
 
-* File `my_structure_warnings.nci` only provides information about possible anomalies in your structure, but it does not affect further NCITools analysis in any way.
 
 ---
 

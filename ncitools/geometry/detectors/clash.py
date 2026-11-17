@@ -55,6 +55,32 @@ def _segment_distance(
     R = np.dot(e_i, e_j)
     lam = (D1 * D2) - R**2
 
+    # ---------------------------------------------------------------
+    # Protection against degenerate segments (edges with zero length)
+    # ---------------------------------------------------------------
+
+    # Both segments are points
+    if D1 < 1e-8 and D2 < 1e-8:
+        return np.linalg.norm(p1 - q1)
+
+    # Only the first segment is a point
+    if D1 < 1e-8:
+        t = np.dot(p1 - q1, e_j) / D2
+        t = np.clip(t, 0.0, 1.0)
+        closest_q = q1 + t * e_j
+        return np.linalg.norm(p1 - closest_q)
+
+    # Only the second segment is a point
+    if D2 < 1e-8:
+        s = np.dot(q1 - p1, e_i) / D1
+        s = np.clip(s, 0.0, 1.0)
+        closest_p = p1 + s * e_i
+        return np.linalg.norm(q1 - closest_p)
+
+
+    #---------------------
+    # Non-degenerate cases
+    #---------------------
     if lam > 10e-8:
         t = (S1 * D2 - S2 * R) / lam
     else:
