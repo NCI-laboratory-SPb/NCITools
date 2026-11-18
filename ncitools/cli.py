@@ -97,8 +97,17 @@ _INTERACTION_LABELS = {
     "--clash", is_flag=True, default=False,
     help="Calling a function to search for intersecting or closely spaced bonds.",
 )
+@click.option(
+    "--cell", type=str, default=None,
+    help="Unit cell parameters given as a string: 'a b c' or 'a b c alpha beta gamma'."
+)
+@click.option(
+    "--pbc", is_flag=True, default=False,
+    help="Enable Periodic Boundary Conditions if a cell is provided."
+)
+
 def geom(input_file, output, angle_tol_hb, angle_tol, confidence,
-         tolerance, radii, skip, bohr, clash):
+         tolerance, radii, skip, bohr, clash, cell, pbc):
     """
     Detect non-covalent interactions from atomic coordinates only.
 
@@ -116,6 +125,22 @@ def geom(input_file, output, angle_tol_hb, angle_tol, confidence,
 
     if bohr:
         atoms.positions *= BOHR_TO_ANGSTROM
+
+    if cell is not None:
+        try:
+            cell_parameters = [float(x) for x in cell.split()]
+            atoms.set_cell(cell_parameters)
+            click.echo(f"Applied unit cell: {cell_parameters}")
+        except ValueError:
+            click.echo("Error: --cell must contain 3 or 6 numbers separated by spaces.")
+            return
+
+    if pbc or cell is not None:
+        if atoms.get_cell().volume == 0:
+            click.echo("Error: cannot enable PBC without a defined unit cell. Use --cell.")
+            return
+        atoms.set_pbc([True, True, True])
+        click.echo(f"Periodic Boundary Conditions are enabled.")
 
     # ------------------------------------------------------------------ #
     # Covalent graph
