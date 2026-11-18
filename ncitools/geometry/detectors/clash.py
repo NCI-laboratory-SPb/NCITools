@@ -130,6 +130,12 @@ def check_spatial_clashes(
     midpoints = []
     half_lengths = []
 
+
+    # If PBC are enabled
+    box_size = None
+    if any(atoms.pbc):
+        box_size = atoms.cell.lengths()
+
     positions = atoms.positions
 
     # Aromatic edges filter
@@ -154,7 +160,7 @@ def check_spatial_clashes(
     half_lengths = np.array(half_lengths)
 
     # Build a K-D tree based on the midpoints
-    tree = cKDTree(midpoints)
+    tree = cKDTree(midpoints, box_size=box_size)
     max_search_radius = 2.0 * np.max(half_lengths) + clash_threshold
 
     # Find candidate pairs within maximum interaction distance
